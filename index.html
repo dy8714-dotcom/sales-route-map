@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>営業ルート最適化マップ（駐車場自動表示版）</title>
+    <style>
+        body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        header { background: #2c3e50; color: white; padding: 10px; text-align: center; font-weight: bold; }
+        #main-container { display: flex; flex: 1; overflow: hidden; }
+        #sidebar { width: 350px; padding: 15px; overflow-y: auto; background: #f4f4f4; border-right: 1px solid #ddd; }
+        #map { flex: 1; }
+        @media (max-width: 768px) {
+            #main-container { flex-direction: column; }
+            #sidebar { width: 100%; height: 40%; order: 2; }
+            #map { height: 60%; order: 1; }
+        }
+        .input-group { margin-bottom: 10px; background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd; }
+        .input-label { font-weight: bold; color: #2c3e50; margin-bottom: 5px; display: block; }
+        input { width: 75%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { cursor: pointer; padding: 10px; border: none; border-radius: 4px; background: #3498db; color: white; margin: 5px 0; }
+        .remove-btn { background: #e74c3c; padding: 5px 8px; font-size: 0.8em; }
+        .info-panel { margin-top: 15px; padding: 10px; background: #fff; border-radius: 8px; font-size: 0.85em; }
+        .p-link { color: #3498db; text-decoration: none; display: block; margin: 3px 0; }
+    </style>
+</head>
+<body>
+
+<header>営業ルート案内 ＆ 周辺駐車場ナビ</header>
+
+<div id="main-container">
+    <div id="sidebar">
+        <div id="location-inputs"></div>
+        <button onclick="addInput()" style="width: 100%;">＋ 地点（経由地）を追加</button>
+        <button onclick="calculateRoute()" style="width: 100%; background: #27ae60; font-size: 1.1em; font-weight: bold;">ルートを表示 ＆ 駐車場検索</button>
+        <div id="info" class="info-panel"></div>
+    </div>
+    <div id="map"></div>
+</div>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCIj6xwk9pkWn9YbiAymzFt04AG_XrmC40&libraries=places&callback=initMap" async defer></script>
+
+<script>
+    let map, directionsService, directionsRenderer, parkingMarkers = [];
+
+    function initMap() {
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer();
+        map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 13, center: { lat: 35.1815, lng: 136.9066 }
+        });
+        directionsRenderer.setMap(map);
+        loadSavedData();
+    }
+
+    function addInput(value = "") {
+        const container = document.getElementById('location-inputs');
+        const count = container.children.length;
+        const label = String.fromCharCode(65 + count); // A, B, C...
+        const div = document.createElement('div');
+        div.className = 'input-group';
+        div.innerHTML = `
+            <span class="input-label">地点 ${label}</span>
+            <input type="text" class="address-input" placeholder="住所または施設名" value="${value}" onchange="saveData()">
+            <button class="remove-btn" onclick="this.parentElement.remove(); reLabel(); saveData();">×消去</button>
+        `;
+        container.appendChild(div);
+    }
+
+    function reLabel() {
+        document.querySelectorAll('.input-label').forEach((el, i) => {
+            el.innerText = `地点 ${String.fromCharCode(65 + i)}`;
+        });
+    }
+
+    function calculateRoute() {
+        parkingMarkers.forEach(m => m.setMap(null));
+        parkingMarkers = [];
+
+        const inputs = document.querySelectorAll('.address-input');
+        const locations = Array.from(inputs).map(i => i.value).filter(v => v !== "");
+        if (locations.length < 2) { alert("2地点以上入力してください"); return; }
+
+        const origin = locations[0];
+        const destination = locations[locations.length - 1];
+        const waypoints = locations.slice(1, -1).map(l => ({ location: l, stopover: true }));
+
+        directionsService.route({
+            origin: origin, destination: destination, waypoints: waypoints,
+            travelMode: google.maps.TravelMode.DRIVING
+        }, (response, status) => {
+            if (status === 'OK') {
+                directionsRenderer.setDirections(response);
+                const route = response.routes[0];
+                
+                // 全地点（A, B, C...）の周辺駐車場を検索
+                searchParking(route.legs[0].start_location, "A");
+                route.legs.forEach((leg, i) => {
+                    searchParking(leg.end_location, String.fromCharCode(66 + i));
+                });
+                
+                displaySummary(route);
+            } else {
+                alert("ルート検索失敗: " + status);
+            }
+        });
+    }
+
+    function searchParking(pos, label) {
+        const service = new google.maps.places.PlacesService(map);
+        service.nearbySearch({ location: pos, radius: 200, type: ['parking'] }, (results, status) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK) {
+                results.forEach(place => {
+                    const marker = new google.maps.Marker({
+                        map: map, position: place.geometry.location, title: place.name,
+                        label: { text: "P", color: "white", fontWeight: "bold" }
+                    });
+                    parkingMarkers.push(marker);
+                });
+            }
+        });
+    }
+
+    function displaySummary(route) {
+        let html = "<strong>走行データ</strong><hr>";
+        route.legs.forEach((leg, i) => {
+            const from = String.fromCharCode(65 + i);
+            const to = String.fromCharCode(66 + i);
+            html += `<div>${from}→${to}: ${leg.distance.text} (${leg.duration.text})</div>`;
+        });
+        document.getElementById('info').innerHTML = html;
+    }
+
+    function saveData() {
+        const data = Array.from(document.querySelectorAll('.address-input')).map(i => i.value);
+        localStorage.setItem('sales_route_v2', JSON.stringify(data));
+    }
+
+    function loadSavedData() {
+        const saved = JSON.parse(localStorage.getItem('sales_route_v2') || "[]");
+        if (saved.length) saved.forEach(v => addInput(v));
+        else { addInput(); addInput(); }
+    }
+</script>
+</body>
+</html>
