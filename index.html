@@ -3,36 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>営業ルート最適化マップ（駐車場自動表示版）</title>
+    <title>営業ルート最適化ナビ（完全整合版）</title>
     <style>
-        body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
-        header { background: #2c3e50; color: white; padding: 10px; text-align: center; font-weight: bold; }
+        body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; background: #f0f2f5; }
+        header { background: #2c3e50; color: white; padding: 15px; text-align: center; font-weight: bold; font-size: 1.2em; }
         #main-container { display: flex; flex: 1; overflow: hidden; }
-        #sidebar { width: 350px; padding: 15px; overflow-y: auto; background: #f4f4f4; border-right: 1px solid #ddd; }
+        #sidebar { width: 380px; padding: 15px; overflow-y: auto; background: #fff; border-right: 1px solid #ddd; }
         #map { flex: 1; }
         @media (max-width: 768px) {
             #main-container { flex-direction: column; }
-            #sidebar { width: 100%; height: 40%; order: 2; }
-            #map { height: 60%; order: 1; }
+            #sidebar { width: 100%; height: 50%; order: 2; }
+            #map { height: 50%; order: 1; }
         }
-        .input-group { margin-bottom: 10px; background: white; padding: 10px; border-radius: 8px; border: 1px solid #ddd; }
-        .input-label { font-weight: bold; color: #2c3e50; margin-bottom: 5px; display: block; }
-        input { width: 75%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        button { cursor: pointer; padding: 10px; border: none; border-radius: 4px; background: #3498db; color: white; margin: 5px 0; }
-        .remove-btn { background: #e74c3c; padding: 5px 8px; font-size: 0.8em; }
-        .info-panel { margin-top: 15px; padding: 10px; background: #fff; border-radius: 8px; font-size: 0.85em; }
-        .p-link { color: #3498db; text-decoration: none; display: block; margin: 3px 0; }
+        .section-title { font-size: 0.85em; color: #7f8c8d; margin: 12px 0 5px; font-weight: bold; border-bottom: 1px solid #eee; }
+        .input-group { margin-bottom: 8px; background: #fdfdfd; padding: 8px; border-radius: 6px; border: 1px solid #eee; display: flex; align-items: center; gap: 5px; }
+        .input-group.special { background: #e8f4fd; border-color: #3498db; }
+        .input-label { font-weight: bold; color: #2c3e50; width: 65px; font-size: 0.85em; }
+        input { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; }
+        button { cursor: pointer; padding: 8px; border: none; border-radius: 4px; }
+        .primary-btn { background: #3498db; color: white; width: 100%; font-weight: bold; margin-top: 10px; }
+        .go-btn { background: #27ae60; color: white; width: 100%; font-size: 1.1em; font-weight: bold; margin-top: 15px; height: 50px; }
+        .location-btn { background: #95a5a6; color: white; font-size: 0.75em; }
+        .remove-btn { background: #e74c3c; color: white; padding: 5px 8px; }
+        .info-panel { margin-top: 15px; padding: 12px; background: #fafafa; border-radius: 8px; border: 1px solid #ddd; }
+        .route-link { display: block; padding: 12px; margin: 8px 0; background: white; border: 2px solid #3498db; color: #3498db; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center; }
     </style>
 </head>
 <body>
 
-<header>営業ルート案内 ＆ 周辺駐車場ナビ</header>
+<header>営業ルートナビ</header>
 
 <div id="main-container">
     <div id="sidebar">
-        <div id="location-inputs"></div>
-        <button onclick="addInput()" style="width: 100%;">＋ 地点（経由地）を追加</button>
-        <button onclick="calculateRoute()" style="width: 100%; background: #27ae60; font-size: 1.1em; font-weight: bold;">ルートを表示 ＆ 駐車場検索</button>
+        <div class="section-title">START</div>
+        <div class="input-group special">
+            <span class="input-label">現在地</span>
+            <input type="text" id="start-point" class="address-input" placeholder="住所または施設名" onchange="saveData()">
+            <button class="location-btn" onclick="getCurrentLocation()">GPS</button>
+        </div>
+
+        <div class="section-title">WAYPOINTS (A, B, C...)</div>
+        <div id="waypoint-inputs"></div>
+        <button class="primary-btn" onclick="addWaypoint()">＋ 経由地を追加</button>
+
+        <div class="section-title">GOAL</div>
+        <div class="input-group special">
+            <span class="input-label">目的地</span>
+            <input type="text" id="end-point" class="address-input" placeholder="最後に行く場所" onchange="saveData()">
+        </div>
+
+        <button class="go-btn" onclick="calculateRoute()">ルートを表示 ＆ 駐車場検索</button>
+        
         <div id="info" class="info-panel"></div>
     </div>
     <div id="map"></div>
@@ -41,11 +62,13 @@
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCIj6xwk9pkWn9YbiAymzFt04AG_XrmC40&libraries=places&callback=initMap" async defer></script>
 
 <script>
-    let map, directionsService, directionsRenderer, parkingMarkers = [];
+    let map, directionsService, directionsRenderer;
+    let customMarkers = []; // 独自ピン（現, A, B, 目）を管理
 
     function initMap() {
         directionsService = new google.maps.DirectionsService();
-        directionsRenderer = new google.maps.DirectionsRenderer();
+        // suppressMarkers: true でGoogle標準のA,B,Cピンを消す
+        directionsRenderer = new google.maps.DirectionsRenderer({ suppressMarkers: true });
         map = new google.maps.Map(document.getElementById('map'), {
             zoom: 13, center: { lat: 35.1815, lng: 136.9066 }
         });
@@ -53,93 +76,149 @@
         loadSavedData();
     }
 
-    function addInput(value = "") {
-        const container = document.getElementById('location-inputs');
-        const count = container.children.length;
-        const label = String.fromCharCode(65 + count); // A, B, C...
+    function getCurrentLocation() {
+        if (!navigator.geolocation) {
+            alert("位置情報に対応していません");
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const latlng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                const geocoder = new google.maps.Geocoder();
+                geocoder.geocode({ location: latlng }, (results, status) => {
+                    if (status === "OK" && results[0]) {
+                        document.getElementById('start-point').value = results[0].formatted_address;
+                        saveData();
+                    }
+                });
+            },
+            () => { alert("GPSがオフか、ブラウザで許可されていません"); }
+        );
+    }
+
+    function addWaypoint(value = "") {
+        const container = document.getElementById('waypoint-inputs');
         const div = document.createElement('div');
         div.className = 'input-group';
         div.innerHTML = `
-            <span class="input-label">地点 ${label}</span>
-            <input type="text" class="address-input" placeholder="住所または施設名" value="${value}" onchange="saveData()">
-            <button class="remove-btn" onclick="this.parentElement.remove(); reLabel(); saveData();">×消去</button>
+            <span class="input-label"></span>
+            <input type="text" class="waypoint-input address-input" placeholder="住所または施設名" value="${value}" onchange="saveData()">
+            <button class="remove-btn" onclick="this.parentElement.remove(); reLabel(); saveData();">×</button>
         `;
         container.appendChild(div);
+        reLabel();
     }
 
     function reLabel() {
-        document.querySelectorAll('.input-label').forEach((el, i) => {
-            el.innerText = `地点 ${String.fromCharCode(65 + i)}`;
+        document.querySelectorAll('.waypoint-input').forEach((el, i) => {
+            el.previousElementSibling.innerText = `地点 ${String.fromCharCode(65 + i)}`;
         });
     }
 
     function calculateRoute() {
-        parkingMarkers.forEach(m => m.setMap(null));
-        parkingMarkers = [];
+        // 既存のピンをすべて削除
+        customMarkers.forEach(m => m.setMap(null));
+        customMarkers = [];
 
-        const inputs = document.querySelectorAll('.address-input');
-        const locations = Array.from(inputs).map(i => i.value).filter(v => v !== "");
-        if (locations.length < 2) { alert("2地点以上入力してください"); return; }
+        const start = document.getElementById('start-point').value;
+        const end = document.getElementById('end-point').value;
+        const waypointInputs = document.querySelectorAll('.waypoint-input');
+        const waypoints = Array.from(waypointInputs)
+            .map(i => i.value)
+            .filter(v => v !== "")
+            .map(loc => ({ location: loc, stopover: true }));
 
-        const origin = locations[0];
-        const destination = locations[locations.length - 1];
-        const waypoints = locations.slice(1, -1).map(l => ({ location: l, stopover: true }));
+        if (!start || !end) { alert("現在地と目的地を入力してください"); return; }
 
         directionsService.route({
-            origin: origin, destination: destination, waypoints: waypoints,
-            travelMode: google.maps.TravelMode.DRIVING
+            origin: start, destination: end, waypoints: waypoints,
+            travelMode: google.maps.TravelMode.DRIVING,
+            optimizeWaypoints: false // 勝手に入れ替えない
         }, (response, status) => {
             if (status === 'OK') {
                 directionsRenderer.setDirections(response);
-                const route = response.routes[0];
-                
-                // 全地点（A, B, C...）の周辺駐車場を検索
-                searchParking(route.legs[0].start_location, "A");
-                route.legs.forEach((leg, i) => {
-                    searchParking(leg.end_location, String.fromCharCode(66 + i));
-                });
-                
-                displaySummary(route);
+                const legs = response.routes[0].legs;
+
+                // 1. 「現在地」のピンを立てる
+                createCustomMarker(legs[0].start_location, "現", "#e74c3c");
+
+                // 2. 「経由地」のピンを立てる (A, B, C...)
+                for (let i = 0; i < legs.length - 1; i++) {
+                    const label = String.fromCharCode(65 + i);
+                    createCustomMarker(legs[i].end_location, label, "#3498db");
+                    searchParking(legs[i].end_location); // 駐車場検索
+                }
+
+                // 3. 「目的地」のピンを立てる
+                const finalPos = legs[legs.length - 1].end_location;
+                createCustomMarker(finalPos, "目", "#27ae60");
+                searchParking(finalPos); 
+
+                displayNavLinks(legs, start, end, waypoints);
             } else {
-                alert("ルート検索失敗: " + status);
+                alert("ルートエラー: " + status);
             }
         });
     }
 
-    function searchParking(pos, label) {
+    function createCustomMarker(position, label, color) {
+        const marker = new google.maps.Marker({
+            position: position, map: map,
+            label: { text: label, color: "white", fontWeight: "bold" },
+            icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: color, fillOpacity: 1, strokeColor: "white", strokeWeight: 2, scale: 15
+            }
+        });
+        customMarkers.push(marker);
+    }
+
+    function searchParking(pos) {
         const service = new google.maps.places.PlacesService(map);
-        service.nearbySearch({ location: pos, radius: 200, type: ['parking'] }, (results, status) => {
+        service.nearbySearch({ location: pos, radius: 500, type: ['parking'] }, (results, status) => {
             if (status === google.maps.places.PlacesServiceStatus.OK) {
                 results.forEach(place => {
-                    const marker = new google.maps.Marker({
-                        map: map, position: place.geometry.location, title: place.name,
-                        label: { text: "P", color: "white", fontWeight: "bold" }
+                    const pMarker = new google.maps.Marker({
+                        map: map, position: place.geometry.location,
+                        label: { text: "P", color: "white", fontSize: "10px" },
+                        icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: "#34495e", fillOpacity: 0.8, scale: 8, strokeColor: "white" }
                     });
-                    parkingMarkers.push(marker);
+                    customMarkers.push(pMarker);
                 });
             }
         });
     }
 
-    function displaySummary(route) {
-        let html = "<strong>走行データ</strong><hr>";
-        route.legs.forEach((leg, i) => {
-            const from = String.fromCharCode(65 + i);
-            const to = String.fromCharCode(66 + i);
-            html += `<div>${from}→${to}: ${leg.distance.text} (${leg.duration.text})</div>`;
-        });
+    function displayNavLinks(legs, start, end, waypoints) {
+        let html = "<strong>🗺️ ナビを開始する</strong><hr>";
+        const waypointValues = waypoints.map(w => w.location);
+        const points = [start, ...waypointValues, end];
+        
+        for (let i = 0; i < points.length - 1; i++) {
+            const fromName = (i === 0) ? "現在地" : `地点 ${String.fromCharCode(64 + i)}`;
+            const toName = (i === points.length - 2) ? "目的地" : `地点 ${String.fromCharCode(65 + i)}`;
+            
+            const navUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(points[i])}&destination=${encodeURIComponent(points[i+1])}&travelmode=driving`;
+            html += `<a href="${navUrl}" target="_blank" class="route-link">🚗 ${fromName} → ${toName}</a>`;
+        }
         document.getElementById('info').innerHTML = html;
     }
 
     function saveData() {
-        const data = Array.from(document.querySelectorAll('.address-input')).map(i => i.value);
-        localStorage.setItem('sales_route_v2', JSON.stringify(data));
+        const data = {
+            start: document.getElementById('start-point').value,
+            end: document.getElementById('end-point').value,
+            waypoints: Array.from(document.querySelectorAll('.waypoint-input')).map(i => i.value)
+        };
+        localStorage.setItem('sales_route_v4', JSON.stringify(data));
     }
 
     function loadSavedData() {
-        const saved = JSON.parse(localStorage.getItem('sales_route_v2') || "[]");
-        if (saved.length) saved.forEach(v => addInput(v));
-        else { addInput(); addInput(); }
+        const saved = JSON.parse(localStorage.getItem('sales_route_v4') || "{}");
+        document.getElementById('start-point').value = saved.start || "";
+        document.getElementById('end-point').value = saved.end || "";
+        if (saved.waypoints) saved.waypoints.forEach(v => addWaypoint(v));
+        else addWaypoint();
     }
 </script>
 </body>
