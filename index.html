@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>営業ルート最適化ナビ（距離表示強化版）</title>
+    <title>営業ルート最適化ナビ（視認性強化版）</title>
     <style>
         body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; background: #f0f2f5; }
         header { background: #2c3e50; color: white; padding: 15px; text-align: center; font-weight: bold; font-size: 1.2em; }
         #main-container { display: flex; flex: 1; overflow: hidden; }
-        #sidebar { width: 380px; padding: 15px; overflow-y: auto; background: #fff; border-right: 1px solid #ddd; }
+        #sidebar { width: 400px; padding: 15px; overflow-y: auto; background: #fff; border-right: 1px solid #ddd; }
         #map { flex: 1; }
         @media (max-width: 768px) {
             #main-container { flex-direction: column; }
@@ -16,7 +16,7 @@
             #map { height: 50%; order: 1; }
         }
         .section-title { font-size: 0.85em; color: #7f8c8d; margin: 12px 0 5px; font-weight: bold; border-bottom: 1px solid #eee; }
-        .input-group { margin-bottom: 8px; background: #fdfdfd; padding: 8px; border-radius: 6px; border: 1px solid #eee; display: flex; align-items: center; gap: 5px; }
+        .input-group { margin-bottom: 8px; background: #fdfdfd; padding: 8px; border-radius: 6px; border: 1px solid #eee; display: flex; align-items: center; gap: 4px; }
         .input-group.special { background: #e8f4fd; border-color: #3498db; }
         .input-label { font-weight: bold; color: #2c3e50; width: 65px; font-size: 0.85em; flex-shrink: 0; }
         input, select { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; min-width: 0; }
@@ -32,13 +32,13 @@
         .info-panel { margin-top: 15px; padding: 12px; background: #fafafa; border-radius: 8px; border: 1px solid #ddd; }
         .leg-info { margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
         .route-link { display: block; padding: 10px; margin-top: 5px; background: white; border: 2px solid #3498db; color: #3498db; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center; }
-        /* マップ上の距離ラベルのスタイル */
-        .dist-label { background: white; border: 1px solid #666; padding: 2px 5px; border-radius: 3px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 1px 1px 3px rgba(0,0,0,0.3); }
+        /* 地図上の距離ラベル（赤色・太字） */
+        .dist-label { color: #e74c3c !important; font-weight: bold !important; font-size: 14px !important; text-shadow: 1px 1px 0px #fff, -1px -1px 0px #fff, 1px -1px 0px #fff, -1px 1px 0px #fff; }
     </style>
 </head>
 <body>
 
-<header>営業ルートナビ（距離集計版）</header>
+<header>営業ルートナビ（視認性強化版）</header>
 
 <div id="main-container">
     <div id="sidebar">
@@ -50,8 +50,9 @@
         <div class="input-group special">
             <span class="input-label">現在地</span>
             <input type="text" id="start-point" class="address-input" placeholder="住所または施設名" onchange="saveData()">
+            <button class="remove-btn" onclick="clearValue('start-point')">×</button>
             <button class="search-btn" onclick="openGMap('start-point')">🔍</button>
-            <button id="gps-btn" class="location-btn" onclick="getCurrentLocation()">GPS取得</button>
+            <button id="gps-btn" class="location-btn" onclick="getCurrentLocation()">GPS</button>
         </div>
 
         <div class="section-title">WAYPOINTS</div>
@@ -62,12 +63,13 @@
         <div class="input-group special">
             <span class="input-label">目的地</span>
             <input type="text" id="end-point" class="address-input" placeholder="最後に行く場所" onchange="saveData()">
+            <button class="remove-btn" onclick="clearValue('end-point')">×</button>
             <button class="search-btn" onclick="openGMap('end-point')">🔍</button>
         </div>
 
         <div class="option-group">
-            <div style="margin-bottom:8px;">
-                <span class="input-label" style="width:auto; margin-right:10px;">移動手段:</span>
+            <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
+                <span class="input-label" style="width:auto;">移動手段:</span>
                 <select id="travel-mode" onchange="saveData()">
                     <option value="DRIVING">自動車</option>
                     <option value="WALKING">徒歩</option>
@@ -105,6 +107,11 @@
         loadSavedData();
     }
 
+    function clearValue(id) {
+        document.getElementById(id).value = "";
+        saveData();
+    }
+
     function openGMap(id) {
         const val = document.getElementById(id).value;
         if (!val) return;
@@ -120,20 +127,19 @@
     function getCurrentLocation() {
         const btn = document.getElementById('gps-btn');
         if (!navigator.geolocation) return;
-        btn.innerText = "取得中...";
+        btn.innerText = "中...";
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const latlng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
                 new google.maps.Geocoder().geocode({ location: latlng }, (results, status) => {
                     if (status === "OK" && results[0]) {
                         document.getElementById('start-point').value = results[0].formatted_address;
-                        btn.innerText = "取得完了";
-                        setTimeout(() => { btn.innerText = "GPS取得"; }, 2000);
+                        btn.innerText = "GPS";
                         saveData();
                     }
                 });
             },
-            () => { btn.innerText = "GPS取得"; },
+            () => { btn.innerText = "GPS"; },
             { enableHighAccuracy: true, timeout: 10000 }
         );
     }
@@ -171,7 +177,7 @@
         const waypointValues = Array.from(waypointInputs).map(i => i.value).filter(v => v !== "");
         
         if (mode === "TRANSIT" && waypointValues.length > 0) {
-            alert("公共交通機関モードは経由地指定に非対応のため、区間ごとに確認してください。");
+            alert("電車モードはシステム制限により一括での経由表示ができません。個別ナビをご利用ください。");
         }
 
         const waypoints = waypointValues.map(loc => ({ location: loc, stopover: true }));
@@ -210,7 +216,6 @@
                 createMarker(finalPos, "目", "#27ae60", end);
                 searchParking(finalPos); 
 
-                // 総距離表示の更新
                 const totalKm = (totalMeters / 1000).toFixed(1);
                 document.getElementById('total-display').style.display = 'block';
                 document.getElementById('total-km').innerText = totalKm;
@@ -234,12 +239,11 @@
         customMarkers.push(marker);
     }
 
-    // 地図上に距離を表示するためのラベル作成
     function createDistanceLabel(position, text) {
         const marker = new google.maps.Marker({
             position: position, map: map,
-            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 }, // 透明なアイコン
-            label: { text: text, color: "#2c3e50", fontSize: "12px", fontWeight: "bold", className: "dist-label-inner" }
+            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+            label: { text: text, className: "dist-label" }
         });
         customMarkers.push(marker);
     }
@@ -264,7 +268,6 @@
         let html = "<strong>🗺️ ナビ・詳細データ</strong><hr>";
         const allLabels = ["現", ...waypointValues.map((_, i) => String.fromCharCode(65 + i)), "目"];
         const allValues = [start, ...waypointValues, end];
-        const modeNames = { "DRIVING": "車", "WALKING": "徒歩", "BICYCLING": "自転車", "TRANSIT": "電車" };
         const mapMode = { "DRIVING": "driving", "WALKING": "walking", "BICYCLING": "bicycling", "TRANSIT": "transit" }[mode];
 
         legs.forEach((leg, i) => {
@@ -273,7 +276,7 @@
                 <div class="leg-info">
                     <div style="font-size:0.9em; font-weight:bold;">${allLabels[i]} → ${allLabels[i+1]}</div>
                     <div style="font-size:0.85em; color:#e67e22; font-weight:bold;">${leg.distance.text} (${leg.duration.text})</div>
-                    <a href="${navUrl}" target="_blank" class="route-link">🚗 この区間のナビ開始</a>
+                    <a href="${navUrl}" target="_blank" class="route-link">🚗 ナビ開始</a>
                 </div>
             `;
         });
@@ -289,11 +292,11 @@
             highways: document.getElementById('avoid-highways').checked,
             tolls: document.getElementById('avoid-tolls').checked
         };
-        localStorage.setItem('sales_route_v8', JSON.stringify(data));
+        localStorage.setItem('sales_route_v9', JSON.stringify(data));
     }
 
     function loadSavedData() {
-        const saved = JSON.parse(localStorage.getItem('sales_route_v8') || "{}");
+        const saved = JSON.parse(localStorage.getItem('sales_route_v9') || "{}");
         document.getElementById('start-point').value = saved.start || "";
         document.getElementById('end-point').value = saved.end || "";
         document.getElementById('travel-mode').value = saved.mode || "DRIVING";
