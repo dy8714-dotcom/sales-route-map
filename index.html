@@ -353,10 +353,13 @@ function startVoice(inputId, btn){
 
     recognition.onerror = (e) => {
         let msg = '音声認識エラー';
-        if(e.error === 'no-speech') msg = '音声が検出されませんでした';
-        else if(e.error === 'not-allowed') msg = 'マイクの使用が許可されていません';
+        if(e.error === 'no-speech') msg = '音声が検出されませんでした。もう一度お試しください';
+        else if(e.error === 'not-allowed') msg = 'マイクの使用が許可されていません。ブラウザ設定でマイクを許可してください';
+        else if(e.error === 'audio-capture') msg = 'マイクが見つかりません。マイクを接続してください';
+        else if(e.error === 'network') msg = 'ネットワークエラー。接続を確認してください';
+        else if(e.error === 'aborted') msg = '音声入力がキャンセルされました';
         feedback.textContent = '⚠️ ' + msg;
-        setTimeout(()=>feedback.classList.remove('active'),3000);
+        setTimeout(()=>feedback.classList.remove('active'),5000);
     };
 
     recognition.onend = () => {
@@ -387,7 +390,7 @@ function startVoiceWP(btn){
         if(final){input.value=final;saveData();feedback.textContent=`✅ ${final}`;setTimeout(()=>feedback.classList.remove('active'),3000);}
         else{feedback.textContent=`🎤 ${interim}`;}
     };
-    recognition.onerror=(e)=>{feedback.textContent='⚠️ エラー';setTimeout(()=>feedback.classList.remove('active'),3000);};
+    recognition.onerror=(e)=>{let msg='音声認識エラー';if(e.error==='no-speech')msg='音声が検出されませんでした。もう一度お試しください';else if(e.error==='not-allowed')msg='マイクの使用が許可されていません。ブラウザ設定でマイクを許可してください';else if(e.error==='audio-capture')msg='マイクが見つかりません。マイクを接続してください';else if(e.error==='network')msg='ネットワークエラー。接続を確認してください';feedback.textContent='⚠️ '+msg;setTimeout(()=>feedback.classList.remove('active'),5000);};
     recognition.onend=()=>{btn.classList.remove('recording');currentRecognition=null;};
     recognition.start();
 }
@@ -436,9 +439,42 @@ async function calcRoute(){
     const rStart=verified[0].resolved,rEnd=verified[1].resolved,rWPs=verified.slice(2).map(v=>v.resolved);
     if(mode==="TRANSIT"&&rWPs.length>0)alert("電車モードは経由地非対応");
     updatePS("searching");let pT=0,pR=0;
-    dirSvc.route({origin:rStart,destination:rEnd,waypoints:mode==="TRANSIT"?[]:rWPs.map(l=>({location:l,stopover:true})),travelMode:google.maps.TravelMode[mode],avoidHighways:document.getElementById('avoid-highways').checked,avoidTolls:document.getElementById('avoid-tolls').checked,optimizeWaypoints:false},(resp,status)=>{
-        if(status!=='OK'){vs.className='verify-status active error';vs.innerHTML=`❌ ルート計算失敗: ${status}`;return;}
-        vs.className='verify-status active ok';vs.innerHTML='✅ ルート計算成功！';setTimeout(()=>vs.classList.remove('active'),4000);
+
+    // ルート計算を実行（失敗時フォールバック付き）
+    function tryRoute(travelMode, isRetry, retryMsg){
+        dirSvc.route({origin:rStart,destination:rEnd,waypoints:mode==="TRANSIT"?[]:rWPs.map(l=>({location:l,stopover:true})),travelMode:google.maps.TravelMode[travelMode],avoidHighways:document.getElementById('avoid-highways').checked,avoidTolls:document.getElementById('avoid-tolls').checked,optimizeWaypoints:false},(resp,status)=>{
+        if(status!=='OK'){
+            // 自転車モードで失敗 → 徒歩で再試行
+            if(travelMode==='BICYCLING' && !isRetry){
+                vs.className='verify-status active checking';
+                vs.innerHTML='⚠️ 自転車ルートが見つかりません。徒歩ルートで再検索中...';
+                tryRoute('WALKING', true, '※ 日本では自転車ルートが未対応の区間があるため、徒歩ルートで表示しています');
+                return;
+            }
+            // 徒歩で再試行も失敗 → 自動車で最終試行
+            if(travelMode==='WALKING' && isRetry){
+                vs.className='verify-status active checking';
+                vs.innerHTML='⚠️ 徒歩ルートも見つかりません。自動車ルートで再検索中...';
+                tryRoute('DRIVING', true, '※ 自転車・徒歩ルートが見つからないため、自動車ルートで表示しています');
+                return;
+            }
+            // 全て失敗
+            let errMsg = status;
+            if(status==='ZERO_RESULTS') errMsg = '指定された地点間のルートが見つかりません';
+            else if(status==='NOT_FOUND') errMsg = '住所が特定できません';
+            else if(status==='MAX_WAYPOINTS_EXCEEDED') errMsg = '経由地が多すぎます（最大8箇所）';
+            else if(status==='OVER_QUERY_LIMIT') errMsg = 'API利用上限に達しました。しばらく待ってから再試行してください';
+            vs.className='verify-status active error';
+            vs.innerHTML=`❌ ルート計算失敗: ${errMsg}<br><span style="font-size:0.8em;">住所や移動手段を変更してお試しください</span>`;
+            return;
+        }
+        // 成功
+        const modeLabel = {DRIVING:'自動車',WALKING:'徒歩',BICYCLING:'自転車',TRANSIT:'電車・バス'}[travelMode];
+        let successMsg = `✅ ルート計算成功！（${modeLabel}）`;
+        if(retryMsg) successMsg += `<br><span style="font-size:0.8em;color:#e67e22;">${retryMsg}</span>`;
+        vs.className='verify-status active ok';vs.innerHTML=successMsg;
+        setTimeout(()=>vs.classList.remove('active'),retryMsg?8000:4000);
+
         dirRen.setDirections(resp);const legs=resp.routes[0].legs;let tM=0;
         addMk(legs[0].start_location,"現","#e74c3c",rStart);
         legs.forEach((leg,i)=>{tM+=leg.distance.value;const o=new DistLabel(leg.steps[Math.floor(leg.steps.length/2)].start_location,leg.distance.text);o.setMap(map);overlays.push(o);
@@ -447,10 +483,12 @@ async function calcRoute(){
         addMk(legs[legs.length-1].end_location,"目","#27ae60",rEnd);
         pR++;searchP(legs[legs.length-1].end_location,c=>{pT+=c;if(--pR===0)updatePS("done",pT);});
         document.getElementById('total-display').style.display='block';document.getElementById('total-km').innerText=(tM/1000).toFixed(1);
+        // フォールバック時もナビリンクは元のモードで生成（Googleマップ側は対応できるため）
         showNav(legs,rStart,rEnd,rWPs,mode);
-        // モバイルで地図に自動切替
         if(window.innerWidth<=768)switchView('map');
     });
+    }
+    tryRoute(mode, false, null);
 }
 function geocodeAddr(addr){return new Promise(res=>{geocoder.geocode({address:addr},(r,s)=>{if(s==='OK'&&r[0])res({ok:true,address:r[0].formatted_address});else res({ok:false});});});}
 function addMk(pos,label,color,addr){const m=new google.maps.Marker({position:pos,map,label:{text:label,color:"white",fontWeight:"bold"},icon:{path:google.maps.SymbolPath.CIRCLE,fillColor:color,fillOpacity:1,strokeColor:"white",strokeWeight:2,scale:15}});m.addListener('click',()=>{infoWin.setContent(`<div><strong>${label}</strong><br>${addr}<br><a style="color:#3498db;cursor:pointer;" onclick="window.open('https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}','_blank')">Googleマップで表示</a></div>`);infoWin.open(map,m);});markers.push(m);}
