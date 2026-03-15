@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>営業ルート最適化ナビ（視認性強化版）</title>
     <style>
-        body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; background: #f0f2f5; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Segoe UI', 'Hiragino Sans', sans-serif; display: flex; flex-direction: column; height: 100vh; background: #f0f2f5; }
         header { background: #2c3e50; color: white; padding: 15px; text-align: center; font-weight: bold; font-size: 1.2em; }
         #main-container { display: flex; flex: 1; overflow: hidden; }
         #sidebar { width: 400px; padding: 15px; overflow-y: auto; background: #fff; border-right: 1px solid #ddd; }
@@ -32,13 +33,280 @@
         .info-panel { margin-top: 15px; padding: 12px; background: #fafafa; border-radius: 8px; border: 1px solid #ddd; }
         .leg-info { margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
         .route-link { display: block; padding: 10px; margin-top: 5px; background: white; border: 2px solid #3498db; color: #3498db; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center; }
-        /* 地図上の距離ラベル（赤色・太字） */
-        .dist-label { color: #e74c3c !important; font-weight: bold !important; font-size: 14px !important; text-shadow: 1px 1px 0px #fff, -1px -1px 0px #fff, 1px -1px 0px #fff, -1px 1px 0px #fff; }
+
+        /* ==============================
+           1. 距離ラベル（カスタムOverlay）
+           ============================== */
+        .dist-label-box {
+            position: absolute;
+            background: #fff;
+            color: #e74c3c;
+            font-weight: bold;
+            font-size: 13px;
+            padding: 4px 10px;
+            border: 2.5px solid #e74c3c;
+            border-radius: 6px;
+            white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 100;
+            letter-spacing: 0.5px;
+        }
+        .dist-label-box::after {
+            content: '';
+            position: absolute;
+            bottom: -7px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 7px solid #e74c3c;
+        }
+
+        /* ==============================
+           2. 駐車場ステータス表示
+           ============================== */
+        .parking-status {
+            font-size: 0.8em;
+            color: #7f8c8d;
+            text-align: center;
+            margin-top: 6px;
+            padding: 4px 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            display: none;
+        }
+        .parking-status.active { display: block; }
+
+        /* ==============================
+           3. 住所読み取りパネル
+           ============================== */
+        .reader-toggle-btn {
+            background: linear-gradient(135deg, #8e44ad, #9b59b6);
+            color: white;
+            width: 100%;
+            font-weight: bold;
+            font-size: 0.95em;
+            margin-bottom: 10px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        .reader-toggle-btn:hover { opacity: 0.9; }
+
+        .reader-panel {
+            display: none;
+            background: #f5f0ff;
+            border: 1.5px solid #d5c8f0;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            animation: panelSlide 0.3s ease;
+        }
+        .reader-panel.open { display: block; }
+        @keyframes panelSlide {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .reader-panel .tab-bar {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+        .reader-panel .tab-btn {
+            flex: 1;
+            padding: 7px;
+            font-size: 0.8em;
+            font-weight: bold;
+            border-radius: 4px;
+            background: #e8e0f5;
+            color: #6c5b7b;
+            text-align: center;
+        }
+        .reader-panel .tab-btn.active {
+            background: #8e44ad;
+            color: white;
+        }
+        .reader-panel .tab-content { display: none; }
+        .reader-panel .tab-content.active { display: block; }
+
+        .reader-panel textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 8px;
+            border: 1px solid #d5c8f0;
+            border-radius: 4px;
+            font-size: 0.85em;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .image-drop-zone {
+            border: 2px dashed #c0a8e0;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            color: #8e44ad;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: 0.2s;
+            background: #faf7ff;
+            position: relative;
+        }
+        .image-drop-zone:hover, .image-drop-zone.dragover {
+            background: #ede3ff;
+            border-color: #8e44ad;
+        }
+        .image-drop-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .image-preview {
+            max-width: 100%;
+            max-height: 120px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+
+        .extract-btn {
+            background: #8e44ad;
+            color: white;
+            width: 100%;
+            font-weight: bold;
+            margin-top: 8px;
+            padding: 10px;
+        }
+        .extract-btn:disabled {
+            background: #bbb;
+            cursor: not-allowed;
+        }
+
+        .ocr-progress {
+            margin-top: 8px;
+            display: none;
+        }
+        .ocr-progress.active { display: block; }
+        .ocr-progress-bar {
+            height: 6px;
+            background: #e8e0f5;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .ocr-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #8e44ad, #e74c3c);
+            border-radius: 3px;
+            transition: width 0.3s;
+            width: 0%;
+        }
+        .ocr-progress-text {
+            font-size: 0.75em;
+            color: #8e44ad;
+            margin-top: 3px;
+            text-align: center;
+        }
+
+        /* 抽出結果の住所チップ */
+        .address-results {
+            margin-top: 10px;
+        }
+        .address-results-title {
+            font-size: 0.8em;
+            font-weight: bold;
+            color: #6c5b7b;
+            margin-bottom: 6px;
+        }
+        .address-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+            margin-bottom: 5px;
+            background: white;
+            border: 1.5px solid #d5c8f0;
+            border-radius: 6px;
+            cursor: grab;
+            font-size: 0.85em;
+            transition: 0.2s;
+            user-select: none;
+        }
+        .address-chip:hover {
+            border-color: #8e44ad;
+            box-shadow: 0 2px 6px rgba(142, 68, 173, 0.2);
+        }
+        .address-chip.selected {
+            background: #8e44ad;
+            color: white;
+            border-color: #8e44ad;
+        }
+        .address-chip .chip-icon {
+            font-size: 1em;
+            flex-shrink: 0;
+        }
+        .address-chip .chip-text {
+            flex: 1;
+            min-width: 0;
+            word-break: break-all;
+        }
+        .address-chip .chip-remove {
+            background: none;
+            border: none;
+            color: #999;
+            cursor: pointer;
+            padding: 0 2px;
+            font-size: 1.1em;
+            flex-shrink: 0;
+        }
+        .address-chip.selected .chip-remove { color: rgba(255,255,255,0.7); }
+
+        .address-chip.dragging {
+            opacity: 0.5;
+        }
+
+        /* ドロップ対象のハイライト */
+        .address-input.drop-highlight {
+            outline: 3px solid #8e44ad !important;
+            outline-offset: -1px;
+            background: #f5f0ff !important;
+        }
+
+        .chip-hint {
+            font-size: 0.72em;
+            color: #999;
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        /* URL入力 */
+        .url-input-row {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 6px;
+        }
+        .url-input-row input {
+            flex: 1;
+            font-size: 0.85em;
+        }
+        .url-fetch-btn {
+            background: #8e44ad;
+            color: white;
+            font-size: 0.8em;
+            font-weight: bold;
+            white-space: nowrap;
+            padding: 8px 12px;
+        }
     </style>
 </head>
 <body>
 
-<header>営業ルートナビ（視認性強化版）</header>
+<header>営業ルートナビ（視認性強化版 v2）</header>
 
 <div id="main-container">
     <div id="sidebar">
@@ -46,6 +314,57 @@
             総移動距離: <span id="total-km">0.0</span> km
         </div>
 
+        <!-- ===== 住所読み取りパネル ===== -->
+        <button class="reader-toggle-btn" onclick="toggleReaderPanel()">
+            📷 住所読み取り（画像・テキスト）<span id="reader-arrow">▼</span>
+        </button>
+        <div id="reader-panel" class="reader-panel">
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="switchReaderTab('image', this)">📷 画像OCR</button>
+                <button class="tab-btn" onclick="switchReaderTab('text', this)">📋 テキスト貼付</button>
+                <button class="tab-btn" onclick="switchReaderTab('url', this)">🔗 URL読取</button>
+            </div>
+
+            <!-- 画像OCRタブ -->
+            <div id="tab-image" class="tab-content active">
+                <div class="image-drop-zone" id="image-drop-zone">
+                    <input type="file" accept="image/*" id="ocr-file-input" onchange="handleImageSelect(event)">
+                    <div id="image-drop-text">📷 画像をドラッグ＆ドロップ<br>またはクリックして選択</div>
+                    <img id="image-preview" class="image-preview" style="display:none;">
+                </div>
+                <button class="extract-btn" id="ocr-extract-btn" onclick="runOCR()" disabled>🔍 住所を読み取る</button>
+                <div class="ocr-progress" id="ocr-progress">
+                    <div class="ocr-progress-bar"><div class="ocr-progress-fill" id="ocr-progress-fill"></div></div>
+                    <div class="ocr-progress-text" id="ocr-progress-text">読み込み準備中...</div>
+                </div>
+            </div>
+
+            <!-- テキスト貼付タブ -->
+            <div id="tab-text" class="tab-content">
+                <textarea id="text-input" placeholder="住所を含むテキストをここに貼り付けてください。&#10;例: 愛知県名古屋市中区栄3-5-12&#10;    東京都渋谷区神南1-2-3"></textarea>
+                <button class="extract-btn" onclick="extractFromText()">🔍 住所を抽出する</button>
+            </div>
+
+            <!-- URL読取タブ -->
+            <div id="tab-url" class="tab-content">
+                <div class="url-input-row">
+                    <input type="text" id="url-input" placeholder="https://example.com">
+                    <button class="url-fetch-btn" onclick="fetchFromURL()">取得</button>
+                </div>
+                <div style="font-size:0.72em; color:#999; margin-bottom:6px;">※ CORS制限により一部サイトは取得できません</div>
+                <textarea id="url-text-result" placeholder="取得結果がここに表示されます" readonly style="min-height:60px;"></textarea>
+                <button class="extract-btn" onclick="extractFromURLText()">🔍 住所を抽出する</button>
+            </div>
+
+            <!-- 抽出結果 -->
+            <div class="address-results" id="address-results" style="display:none;">
+                <div class="address-results-title">📍 抽出された住所候補 <span id="address-count"></span></div>
+                <div id="address-chips"></div>
+                <div class="chip-hint" id="chip-hint">💡 PC: ドラッグ＆ドロップで入力欄へ ／ スマホ: タップで選択→入力欄をタップ</div>
+            </div>
+        </div>
+
+        <!-- ===== START ===== -->
         <div class="section-title">START</div>
         <div class="input-group special">
             <span class="input-label">現在地</span>
@@ -55,10 +374,12 @@
             <button id="gps-btn" class="location-btn" onclick="getCurrentLocation()">GPS</button>
         </div>
 
+        <!-- ===== WAYPOINTS ===== -->
         <div class="section-title">WAYPOINTS</div>
         <div id="waypoint-inputs"></div>
         <button class="primary-btn" onclick="addWaypoint()">＋ 経由地を追加</button>
 
+        <!-- ===== GOAL ===== -->
         <div class="section-title">GOAL</div>
         <div class="input-group special">
             <span class="input-label">目的地</span>
@@ -67,6 +388,7 @@
             <button class="search-btn" onclick="openGMap('end-point')">🔍</button>
         </div>
 
+        <!-- ===== オプション ===== -->
         <div class="option-group">
             <div style="margin-bottom:8px; display:flex; align-items:center; gap:10px;">
                 <span class="input-label" style="width:auto;">移動手段:</span>
@@ -84,7 +406,10 @@
         </div>
 
         <button class="go-btn" onclick="calculateRoute()">ルートを表示 ＆ 駐車場検索</button>
-        
+
+        <!-- 駐車場ステータス -->
+        <div class="parking-status" id="parking-status"></div>
+
         <div id="info" class="info-panel"></div>
     </div>
     <div id="map"></div>
@@ -95,7 +420,18 @@
 <script>
     let map, directionsService, directionsRenderer, infoWindow;
     let customMarkers = [];
+    let customOverlays = [];
+    let selectedChipAddress = null;
 
+    /* ============================================
+       1. カスタム距離ラベル（OverlayView）
+       ※ Google Maps API読込後に initMap() 内で定義
+       ============================================ */
+    let DistanceLabelOverlay = null;
+
+    /* ============================================
+       初期化
+       ============================================ */
     function initMap() {
         directionsService = new google.maps.DirectionsService();
         directionsRenderer = new google.maps.DirectionsRenderer({ suppressMarkers: true });
@@ -104,9 +440,52 @@
             zoom: 13, center: { lat: 35.1815, lng: 136.9066 }
         });
         directionsRenderer.setMap(map);
+
+        // Google Maps API 読込完了後にクラスを定義
+        DistanceLabelOverlay = class extends google.maps.OverlayView {
+            constructor(position, text) {
+                super();
+                this.position = position;
+                this.text = text;
+                this.div = null;
+            }
+            onAdd() {
+                this.div = document.createElement('div');
+                this.div.className = 'dist-label-box';
+                this.div.textContent = this.text;
+                const panes = this.getPanes();
+                panes.overlayLayer.appendChild(this.div);
+            }
+            draw() {
+                const projection = this.getProjection();
+                if (!projection || !this.div) return;
+                const pos = projection.fromLatLngToDivPixel(this.position);
+                if (pos) {
+                    this.div.style.left = pos.x + 'px';
+                    this.div.style.top = pos.y + 'px';
+                }
+            }
+            onRemove() {
+                if (this.div && this.div.parentNode) {
+                    this.div.parentNode.removeChild(this.div);
+                    this.div = null;
+                }
+            }
+        };
+
         loadSavedData();
+        setupDropTargets();
     }
 
+    function createDistanceLabel(position, text) {
+        const overlay = new DistanceLabelOverlay(position, text);
+        overlay.setMap(map);
+        customOverlays.push(overlay);
+    }
+
+    /* ============================================
+       基本操作
+       ============================================ */
     function clearValue(id) {
         document.getElementById(id).value = "";
         saveData();
@@ -156,6 +535,8 @@
         `;
         container.appendChild(div);
         reLabel();
+        // 新しい入力欄にもドロップ対象を設定
+        setupDropTargets();
     }
 
     function reLabel() {
@@ -164,9 +545,15 @@
         });
     }
 
+    /* ============================================
+       ルート計算
+       ============================================ */
     function calculateRoute() {
+        // 既存マーカー・オーバーレイをクリア
         customMarkers.forEach(m => m.setMap(null));
         customMarkers = [];
+        customOverlays.forEach(o => o.setMap(null));
+        customOverlays = [];
 
         const start = document.getElementById('start-point').value;
         const end = document.getElementById('end-point').value;
@@ -175,7 +562,7 @@
         const avoidTolls = document.getElementById('avoid-tolls').checked;
         const waypointInputs = document.querySelectorAll('.waypoint-input');
         const waypointValues = Array.from(waypointInputs).map(i => i.value).filter(v => v !== "");
-        
+
         if (mode === "TRANSIT" && waypointValues.length > 0) {
             alert("電車モードはシステム制限により一括での経由表示ができません。個別ナビをご利用ください。");
         }
@@ -183,8 +570,13 @@
         const waypoints = waypointValues.map(loc => ({ location: loc, stopover: true }));
         if (!start || !end) return;
 
+        // 駐車場ステータスリセット
+        updateParkingStatus("searching");
+        let parkingTotal = 0;
+        let parkingSearchesRemaining = 0;
+
         directionsService.route({
-            origin: start, destination: end, 
+            origin: start, destination: end,
             waypoints: mode === "TRANSIT" ? [] : waypoints,
             travelMode: google.maps.TravelMode[mode],
             avoidHighways: avoidHighways, avoidTolls: avoidTolls,
@@ -196,11 +588,11 @@
                 let totalMeters = 0;
 
                 createMarker(legs[0].start_location, "現", "#e74c3c", start);
-                
+
                 legs.forEach((leg, i) => {
                     totalMeters += leg.distance.value;
-                    
-                    // 地図上の線の中央に距離ラベルを配置
+
+                    // 各区間の中間地点に距離ラベルを配置（カスタムOverlay）
                     const midIndex = Math.floor(leg.steps.length / 2);
                     const midPos = leg.steps[midIndex].start_location;
                     createDistanceLabel(midPos, leg.distance.text);
@@ -208,19 +600,31 @@
                     if (i < legs.length - 1) {
                         const label = String.fromCharCode(65 + i);
                         createMarker(leg.end_location, label, "#3498db", waypointValues[i]);
-                        searchParking(leg.end_location);
+                        parkingSearchesRemaining++;
+                        searchParking(leg.end_location, (count) => {
+                            parkingTotal += count;
+                            parkingSearchesRemaining--;
+                            if (parkingSearchesRemaining === 0) updateParkingStatus("done", parkingTotal);
+                        });
                     }
                 });
 
                 const finalPos = legs[legs.length - 1].end_location;
                 createMarker(finalPos, "目", "#27ae60", end);
-                searchParking(finalPos); 
+                parkingSearchesRemaining++;
+                searchParking(finalPos, (count) => {
+                    parkingTotal += count;
+                    parkingSearchesRemaining--;
+                    if (parkingSearchesRemaining === 0) updateParkingStatus("done", parkingTotal);
+                });
 
                 const totalKm = (totalMeters / 1000).toFixed(1);
                 document.getElementById('total-display').style.display = 'block';
                 document.getElementById('total-km').innerText = totalKm;
 
                 displayNavLinks(legs, start, end, waypointValues, mode);
+            } else {
+                alert("ルート計算に失敗しました: " + status);
             }
         });
     }
@@ -239,31 +643,79 @@
         customMarkers.push(marker);
     }
 
-    function createDistanceLabel(position, text) {
-        const marker = new google.maps.Marker({
-            position: position, map: map,
-            icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
-            label: { text: text, className: "dist-label" }
-        });
-        customMarkers.push(marker);
-    }
-
-    function searchParking(pos) {
-        const service = new google.maps.places.PlacesService(map);
-        service.nearbySearch({ location: pos, radius: 500, type: ['parking'] }, (results, status) => {
-            if (status === google.maps.places.PlacesServiceStatus.OK) {
-                results.forEach(place => {
-                    const pMarker = new google.maps.Marker({
-                        map: map, position: place.geometry.location,
-                        label: { text: "P", color: "white", fontSize: "10px" },
-                        icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: "#34495e", fillOpacity: 0.8, scale: 8, strokeColor: "white" }
-                    });
-                    customMarkers.push(pMarker);
-                });
+    /* ============================================
+       2. 駐車場検索（修正版）
+       ============================================ */
+    function updateParkingStatus(state, count) {
+        const el = document.getElementById('parking-status');
+        el.classList.add('active');
+        if (state === "searching") {
+            el.innerHTML = "🔍 駐車場を検索中...";
+            el.style.color = "#e67e22";
+        } else if (state === "done") {
+            if (count > 0) {
+                el.innerHTML = `🅿️ ${count}件の駐車場が見つかりました`;
+                el.style.color = "#27ae60";
+            } else {
+                el.innerHTML = "⚠️ 付近に駐車場が見つかりませんでした";
+                el.style.color = "#e74c3c";
             }
+            setTimeout(() => { el.style.color = "#7f8c8d"; }, 3000);
+        }
+    }
+
+    function searchParking(pos, callback) {
+        const service = new google.maps.places.PlacesService(map);
+        let foundCount = 0;
+
+        // 1次検索: type指定（単一文字列に修正）
+        service.nearbySearch({
+            location: pos,
+            radius: 500,
+            type: 'parking'
+        }, (results, status) => {
+            const firstResults = (status === google.maps.places.PlacesServiceStatus.OK) ? results : [];
+            foundCount += addParkingMarkers(firstResults);
+
+            // 2次検索: キーワード検索でカバー
+            service.nearbySearch({
+                location: pos,
+                radius: 500,
+                keyword: '駐車場 コインパーキング'
+            }, (results2, status2) => {
+                const secondResults = (status2 === google.maps.places.PlacesServiceStatus.OK) ? results2 : [];
+                // 重複除外して追加
+                const existingIds = new Set(firstResults.map(r => r.place_id));
+                const newResults = secondResults.filter(r => !existingIds.has(r.place_id));
+                foundCount += addParkingMarkers(newResults);
+
+                if (callback) callback(foundCount);
+            });
         });
     }
 
+    function addParkingMarkers(results) {
+        if (!results || results.length === 0) return 0;
+        results.forEach(place => {
+            const pMarker = new google.maps.Marker({
+                map: map,
+                position: place.geometry.location,
+                label: { text: "P", color: "white", fontSize: "10px", fontWeight: "bold" },
+                icon: { path: google.maps.SymbolPath.CIRCLE, fillColor: "#34495e", fillOpacity: 0.85, scale: 10, strokeColor: "white", strokeWeight: 1.5 }
+            });
+            // クリックで駐車場情報表示
+            pMarker.addListener('click', () => {
+                infoWindow.setContent(`<div><strong>🅿️ ${place.name}</strong><br>${place.vicinity || ''}<br>評価: ${place.rating ? place.rating + '⭐' : '---'}</div>`);
+                infoWindow.open(map, pMarker);
+            });
+            customMarkers.push(pMarker);
+        });
+        return results.length;
+    }
+
+    /* ============================================
+       ナビリンク表示
+       ============================================ */
     function displayNavLinks(legs, start, end, waypointValues, mode) {
         let html = "<strong>🗺️ ナビ・詳細データ</strong><hr>";
         const allLabels = ["現", ...waypointValues.map((_, i) => String.fromCharCode(65 + i)), "目"];
@@ -283,6 +735,331 @@
         document.getElementById('info').innerHTML = html;
     }
 
+    /* ============================================
+       3. 住所読み取り機能
+       ============================================ */
+
+    // --- パネル制御 ---
+    function toggleReaderPanel() {
+        const panel = document.getElementById('reader-panel');
+        const arrow = document.getElementById('reader-arrow');
+        panel.classList.toggle('open');
+        arrow.textContent = panel.classList.contains('open') ? '▲' : '▼';
+    }
+
+    function switchReaderTab(tabName, btnEl) {
+        document.querySelectorAll('.reader-panel .tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.reader-panel .tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('tab-' + tabName).classList.add('active');
+        btnEl.classList.add('active');
+    }
+
+    // --- 画像選択 ---
+    let selectedImageFile = null;
+
+    function handleImageSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        selectedImageFile = file;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const preview = document.getElementById('image-preview');
+            preview.src = e.target.result;
+            preview.style.display = 'block';
+            document.getElementById('image-drop-text').textContent = file.name;
+            document.getElementById('ocr-extract-btn').disabled = false;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // 画像ドロップゾーンの設定
+    document.addEventListener('DOMContentLoaded', () => {
+        const zone = document.getElementById('image-drop-zone');
+        if (!zone) return;
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                selectedImageFile = file;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    document.getElementById('image-preview').src = ev.target.result;
+                    document.getElementById('image-preview').style.display = 'block';
+                    document.getElementById('image-drop-text').textContent = file.name;
+                    document.getElementById('ocr-extract-btn').disabled = false;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    });
+
+    // --- Tesseract.js 動的ロード & OCR ---
+    let tesseractLoaded = false;
+
+    async function loadTesseract() {
+        if (tesseractLoaded || window.Tesseract) { tesseractLoaded = true; return; }
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js';
+            script.onload = () => { tesseractLoaded = true; resolve(); };
+            script.onerror = () => reject(new Error('Tesseract.js の読み込みに失敗しました'));
+            document.head.appendChild(script);
+        });
+    }
+
+    async function runOCR() {
+        if (!selectedImageFile) return;
+
+        const progressEl = document.getElementById('ocr-progress');
+        const fillEl = document.getElementById('ocr-progress-fill');
+        const textEl = document.getElementById('ocr-progress-text');
+        const btn = document.getElementById('ocr-extract-btn');
+
+        btn.disabled = true;
+        progressEl.classList.add('active');
+        textEl.textContent = 'OCRエンジンを読み込み中...';
+        fillEl.style.width = '10%';
+
+        try {
+            await loadTesseract();
+            textEl.textContent = '日本語データを準備中...';
+            fillEl.style.width = '25%';
+
+            const worker = await Tesseract.createWorker({
+                logger: (m) => {
+                    if (m.status === 'recognizing text') {
+                        const pct = Math.round(25 + m.progress * 70);
+                        fillEl.style.width = pct + '%';
+                        textEl.textContent = `文字を認識中... ${Math.round(m.progress * 100)}%`;
+                    } else if (m.status === 'loading language traineddata') {
+                        fillEl.style.width = '20%';
+                        textEl.textContent = '言語データをダウンロード中...';
+                    }
+                }
+            });
+
+            await worker.loadLanguage('jpn+eng');
+            await worker.initialize('jpn+eng');
+
+            fillEl.style.width = '30%';
+            textEl.textContent = '文字を認識中...';
+
+            const { data: { text } } = await worker.recognize(selectedImageFile);
+            await worker.terminate();
+
+            fillEl.style.width = '100%';
+            textEl.textContent = '完了！住所を抽出中...';
+
+            const addresses = extractAddresses(text);
+            displayAddressChips(addresses);
+
+            setTimeout(() => {
+                progressEl.classList.remove('active');
+                btn.disabled = false;
+            }, 1000);
+
+        } catch (err) {
+            textEl.textContent = 'エラー: ' + err.message;
+            fillEl.style.width = '0%';
+            btn.disabled = false;
+            console.error('OCR error:', err);
+        }
+    }
+
+    // --- テキストからの住所抽出 ---
+    function extractFromText() {
+        const text = document.getElementById('text-input').value;
+        if (!text.trim()) return;
+        const addresses = extractAddresses(text);
+        displayAddressChips(addresses);
+    }
+
+    // --- URL取得 ---
+    async function fetchFromURL() {
+        const url = document.getElementById('url-input').value.trim();
+        if (!url) return;
+        const resultArea = document.getElementById('url-text-result');
+        resultArea.value = '取得中...';
+
+        try {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error('取得失敗 (' + resp.status + ')');
+            const html = await resp.text();
+            // HTMLからテキストを抽出
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const text = doc.body ? doc.body.innerText : html;
+            resultArea.value = text.substring(0, 5000);
+        } catch (err) {
+            resultArea.value = 'エラー: ' + err.message + '\n※ CORS制限により多くのサイトは直接取得できません。\nページのテキストをコピーして「テキスト貼付」タブをご利用ください。';
+        }
+    }
+
+    function extractFromURLText() {
+        const text = document.getElementById('url-text-result').value;
+        if (!text.trim()) return;
+        const addresses = extractAddresses(text);
+        displayAddressChips(addresses);
+    }
+
+    // --- 住所抽出ロジック ---
+    function extractAddresses(text) {
+        const results = new Set();
+
+        // 全角数字を半角に正規化
+        const normalized = text.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+
+        const patterns = [
+            // 〒付き住所
+            /〒?\s*\d{3}-?\d{4}\s*[^\n\r,、]{5,60}/g,
+            // 都道府県始まりのフル住所
+            /(?:北海道|東京都|(?:京都|大阪)府|[^\s]{2,3}県)\s*[^\s]{1,10}(?:市|区|町|村|郡)[^\n\r,、]{2,50}/g,
+            // 市区町村始まり（都道府県なし）
+            /(?:[^\s\d]{1,6}(?:市|区|町|村))[^\s]{0,6}(?:\d{1,5}[-－ー]\d{1,5}(?:[-－ー]\d{1,5})?|\d{1,5}丁目\d{1,5}(?:番\d{1,5}号?)?)/g,
+            // X丁目パターン
+            /[^\s\d]{2,12}\d{1,3}丁目[\d－\-番号の]{0,20}/g,
+            // カタカナ住所パターン
+            /[ァ-ヴー]{4,}[シクチョウソンマチムラグン][^\n\r,、]{2,30}/g,
+        ];
+
+        patterns.forEach(pattern => {
+            const matches = normalized.match(pattern);
+            if (matches) {
+                matches.forEach(m => {
+                    const cleaned = m.trim().replace(/\s+/g, ' ');
+                    if (cleaned.length >= 5 && cleaned.length <= 80) {
+                        results.add(cleaned);
+                    }
+                });
+            }
+        });
+
+        // 重複・部分一致を除去（長い方を優先）
+        const arr = Array.from(results).sort((a, b) => b.length - a.length);
+        const filtered = [];
+        arr.forEach(addr => {
+            const isDuplicate = filtered.some(existing => existing.includes(addr));
+            if (!isDuplicate) filtered.push(addr);
+        });
+
+        return filtered;
+    }
+
+    // --- 住所チップ表示 ---
+    function displayAddressChips(addresses) {
+        const container = document.getElementById('address-chips');
+        const wrapper = document.getElementById('address-results');
+        const countEl = document.getElementById('address-count');
+
+        if (addresses.length === 0) {
+            wrapper.style.display = 'block';
+            container.innerHTML = '<div style="color:#999;font-size:0.85em;text-align:center;padding:10px;">住所が見つかりませんでした。<br>テキストを直接入力してお試しください。</div>';
+            countEl.textContent = '';
+            return;
+        }
+
+        wrapper.style.display = 'block';
+        countEl.textContent = `(${addresses.length}件)`;
+        container.innerHTML = '';
+
+        addresses.forEach((addr, idx) => {
+            const chip = document.createElement('div');
+            chip.className = 'address-chip';
+            chip.draggable = true;
+            chip.dataset.address = addr;
+            chip.innerHTML = `
+                <span class="chip-icon">📍</span>
+                <span class="chip-text">${addr}</span>
+                <button class="chip-remove" onclick="event.stopPropagation(); this.parentElement.remove(); updateChipCount();">×</button>
+            `;
+
+            // ドラッグ開始
+            chip.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', addr);
+                chip.classList.add('dragging');
+                highlightDropTargets(true);
+            });
+            chip.addEventListener('dragend', () => {
+                chip.classList.remove('dragging');
+                highlightDropTargets(false);
+            });
+
+            // タップ選択（モバイル対応）
+            chip.addEventListener('click', () => {
+                document.querySelectorAll('.address-chip.selected').forEach(c => c.classList.remove('selected'));
+                if (selectedChipAddress === addr) {
+                    selectedChipAddress = null;
+                    chip.classList.remove('selected');
+                } else {
+                    selectedChipAddress = addr;
+                    chip.classList.add('selected');
+                }
+            });
+
+            container.appendChild(chip);
+        });
+    }
+
+    function updateChipCount() {
+        const count = document.querySelectorAll('.address-chip').length;
+        document.getElementById('address-count').textContent = count > 0 ? `(${count}件)` : '';
+    }
+
+    // --- ドラッグ＆ドロップ / タップ挿入ターゲット設定 ---
+    function setupDropTargets() {
+        document.querySelectorAll('.address-input').forEach(input => {
+            // ドロップ受け付け
+            input.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                input.classList.add('drop-highlight');
+            });
+            input.addEventListener('dragleave', () => {
+                input.classList.remove('drop-highlight');
+            });
+            input.addEventListener('drop', (e) => {
+                e.preventDefault();
+                input.classList.remove('drop-highlight');
+                const addr = e.dataTransfer.getData('text/plain');
+                if (addr) {
+                    input.value = addr;
+                    saveData();
+                    flashInput(input);
+                }
+            });
+
+            // タップで選択中のチップを挿入（モバイル対応）
+            input.addEventListener('click', () => {
+                if (selectedChipAddress) {
+                    input.value = selectedChipAddress;
+                    saveData();
+                    flashInput(input);
+                    // 選択状態リセット
+                    document.querySelectorAll('.address-chip.selected').forEach(c => c.classList.remove('selected'));
+                    selectedChipAddress = null;
+                }
+            });
+        });
+    }
+
+    function highlightDropTargets(on) {
+        document.querySelectorAll('.address-input').forEach(input => {
+            if (on) input.classList.add('drop-highlight');
+            else input.classList.remove('drop-highlight');
+        });
+    }
+
+    function flashInput(input) {
+        input.style.transition = 'background 0.3s';
+        input.style.background = '#d5f5e3';
+        setTimeout(() => { input.style.background = ''; }, 800);
+    }
+
+    /* ============================================
+       データ保存 / 復元
+       ============================================ */
     function saveData() {
         const data = {
             start: document.getElementById('start-point').value,
@@ -292,17 +1069,24 @@
             highways: document.getElementById('avoid-highways').checked,
             tolls: document.getElementById('avoid-tolls').checked
         };
-        localStorage.setItem('sales_route_v9', JSON.stringify(data));
+        localStorage.setItem('sales_route_v10', JSON.stringify(data));
     }
 
     function loadSavedData() {
-        const saved = JSON.parse(localStorage.getItem('sales_route_v9') || "{}");
+        const saved = JSON.parse(localStorage.getItem('sales_route_v10') || "{}");
+        // v9からの移行
+        if (!saved.start && !saved.end) {
+            const oldData = JSON.parse(localStorage.getItem('sales_route_v9') || "{}");
+            if (oldData.start || oldData.end) {
+                Object.assign(saved, oldData);
+            }
+        }
         document.getElementById('start-point').value = saved.start || "";
         document.getElementById('end-point').value = saved.end || "";
         document.getElementById('travel-mode').value = saved.mode || "DRIVING";
         document.getElementById('avoid-highways').checked = saved.highways || false;
         document.getElementById('avoid-tolls').checked = saved.tolls || false;
-        if (saved.waypoints) saved.waypoints.forEach(v => addWaypoint(v));
+        if (saved.waypoints && saved.waypoints.length > 0) saved.waypoints.forEach(v => addWaypoint(v));
         else addWaypoint();
     }
 </script>
