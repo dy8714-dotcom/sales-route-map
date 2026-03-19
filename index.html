@@ -28,6 +28,9 @@
         .input-group.special{background:#e8f4fd;border-color:#3498db}
         .input-label{font-weight:bold;color:#2c3e50;width:55px;font-size:.85em;flex-shrink:0}
         input,select{flex:1;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:1em;min-width:0}
+        /* 住所入力欄：2行表示対応のtextarea */
+        textarea.point-input{flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9em;min-width:0;resize:none;height:46px;line-height:1.4;font-family:inherit;overflow:hidden;field-sizing:content}
+        textarea.point-input:focus{height:auto;min-height:46px}
         button{cursor:pointer;padding:8px;border:none;border-radius:6px;transition:.2s;flex-shrink:0}
         .primary-btn{background:#3498db;color:white;width:100%;font-weight:bold;margin-top:10px;padding:12px;font-size:.95em}
         .go-btn{background:#27ae60;color:white;width:100%;font-size:1.1em;font-weight:bold;margin-top:15px;height:54px;border-radius:10px}
@@ -236,7 +239,7 @@ function switchTab(t,b,panel){const p=document.getElementById(panel+'-panel');p.
 // === 音声 ===
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let curRec=null;
 function checkVoice(){if(!SR)document.querySelectorAll('.voice-btn').forEach(b=>b.classList.add('unsupported'));}
-function startVoiceFor(inp,btn){if(!SR)return;if(curRec){curRec.stop();curRec=null;btn.classList.remove('recording');return;}const r=new SR();r.lang='ja-JP';r.continuous=false;r.interimResults=true;const fb=document.getElementById('voice-feedback');btn.classList.add('recording');fb.className='voice-feedback active';fb.textContent='🎤 聞いています...';curRec=r;r.onresult=e=>{let f='',im='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)f+=t;else im+=t;}if(f){inp.value=f;saveData();addSearchHistory(f);fb.textContent='✅ '+f;setTimeout(()=>fb.classList.remove('active'),3000);}else fb.textContent='🎤 '+im;};r.onerror=e=>{let m='エラー';if(e.error==='no-speech')m='音声未検出';else if(e.error==='not-allowed')m='マイク未許可';else if(e.error==='audio-capture')m='マイク未接続';fb.textContent='⚠️ '+m;setTimeout(()=>fb.classList.remove('active'),4000);};r.onend=()=>{btn.classList.remove('recording');curRec=null;};r.start();}
+function startVoiceFor(inp,btn){if(!SR)return;if(curRec){curRec.stop();curRec=null;btn.classList.remove('recording');return;}const r=new SR();r.lang='ja-JP';r.continuous=false;r.interimResults=true;const fb=document.getElementById('voice-feedback');btn.classList.add('recording');fb.className='voice-feedback active';fb.textContent='🎤 聞いています...';curRec=r;r.onresult=e=>{let f='',im='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)f+=t;else im+=t;}if(f){inp.value=f;autoResize(inp);saveData();addSearchHistory(f);fb.textContent='✅ '+f;setTimeout(()=>fb.classList.remove('active'),3000);}else fb.textContent='🎤 '+im;};r.onerror=e=>{let m='エラー';if(e.error==='no-speech')m='音声未検出';else if(e.error==='not-allowed')m='マイク未許可';else if(e.error==='audio-capture')m='マイク未接続';fb.textContent='⚠️ '+m;setTimeout(()=>fb.classList.remove('active'),4000);};r.onend=()=>{btn.classList.remove('recording');curRec=null;};r.start();}
 
 // === 1. 地点ドラッグ並べ替え ===
 function buildAllPoints(){
@@ -263,12 +266,54 @@ function createPointRow(id,label,value,isFixed){
     div.innerHTML=`
         <span class="drag-handle" title="ドラッグで順番入替">⇅</span>
         <span class="input-label" style="color:${color}">${label}</span>
-        <input type="text" class="address-input point-input" data-point-id="${id}" placeholder="住所または施設名" value="${value||''}" onchange="saveData()">
+        <textarea class="address-input point-input" data-point-id="${id}" placeholder="住所または施設名" onchange="saveData()" onblur="resolvePlace(this)" rows="1">${value||''}</textarea>
         <button class="voice-btn" onclick="startVoiceFor(this.parentElement.querySelector('.point-input'),this)">🎤</button>
         <button class="search-btn" onclick="openGME(this)">🔍</button>
         ${isWP?'<button class="remove-btn" onclick="removePoint(this)">×</button>':''}
     `;
+    // textarea自動リサイズ
+    const ta=div.querySelector('textarea');
+    ta.addEventListener('input',()=>autoResize(ta));
+    setTimeout(()=>autoResize(ta),0);
     return div;
+}
+
+function autoResize(ta){
+    ta.style.height='auto';
+    ta.style.height=Math.max(46,ta.scrollHeight)+'px';
+}
+
+// 2. 住所入力後に場所名を自動補完
+let resolvingPlaces=new Set();
+function resolvePlace(textarea){
+    const addr=textarea.value.trim();
+    if(!addr||addr.length<5||resolvingPlaces.has(textarea))return;
+    // 既に場所名がついていそうならスキップ
+    if(/[\u3000-\u9fff]{2,}$/.test(addr)&&!/\d$/.test(addr)){
+        // 末尾が漢字2文字以上で数字でない→既に場所名ある可能性
+        // ただし「区」「町」「市」「丁目」「号」で終わる場合は検索する
+        if(!/[区町市村丁目番号]$/.test(addr))return;
+    }
+    resolvingPlaces.add(textarea);
+    geocoder.geocode({address:addr},(results,status)=>{
+        resolvingPlaces.delete(textarea);
+        if(status!=='OK'||!results[0])return;
+        const loc=results[0].geometry.location;
+        // Places APIで周辺の施設名を取得
+        const svc=new google.maps.places.PlacesService(map);
+        svc.nearbySearch({location:loc,radius:30,type:'establishment'},(places,pStatus)=>{
+            if(pStatus===google.maps.places.PlacesServiceStatus.OK&&places&&places.length>0){
+                const place=places[0];
+                const name=place.name;
+                // 既に入力に含まれていないなら追記
+                if(name&&!addr.includes(name)&&name.length>1){
+                    textarea.value=addr+' '+name;
+                    autoResize(textarea);
+                    saveData();
+                }
+            }
+        });
+    });
 }
 
 function removePoint(btn){btn.parentElement.remove();reNumberPoints();saveData();}
@@ -368,18 +413,50 @@ function updateStartEndLabels(){
 // === 基本操作 ===
 function clearVal(id){const inp=document.querySelector(`[data-point-id="${id}"]`);if(inp)inp.value='';saveData();}
 function openGM(id){const v=document.getElementById(id)?.value;if(v)window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v)}`,'_blank');}
-function openGME(el){const v=el.parentElement.querySelector('input')?.value;if(v)window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v)}`,'_blank');}
-function getGPS(){const b=document.getElementById('gps-btn');if(!navigator.geolocation)return;b.innerText="中...";navigator.geolocation.getCurrentPosition(p=>{geocoder.geocode({location:{lat:p.coords.latitude,lng:p.coords.longitude}},(r,s)=>{if(s==="OK"&&r[0]){const inp=document.querySelector('[data-point-id="start"]');if(inp)inp.value=r[0].formatted_address;saveData();}b.innerText="GPS";});},()=>{b.innerText="GPS";},{enableHighAccuracy:true,timeout:10000});}
+function openGME(el){const v=el.parentElement.querySelector('textarea,input');if(v&&v.value)window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.value)}`,'_blank');}
+function getGPS(){const b=document.getElementById('gps-btn');if(!navigator.geolocation)return;b.innerText="中...";navigator.geolocation.getCurrentPosition(p=>{geocoder.geocode({location:{lat:p.coords.latitude,lng:p.coords.longitude}},(r,s)=>{if(s==="OK"&&r[0]){const inp=document.querySelector('[data-point-id="start"]');if(inp){inp.value=r[0].formatted_address;autoResize(inp);}saveData();}b.innerText="GPS";});},()=>{b.innerText="GPS";},{enableHighAccuracy:true,timeout:10000});}
 
 // === 検索履歴・登録住所・ルート履歴 ===
 function getSearchHist(){return JSON.parse(localStorage.getItem(SK.hist)||'[]');}
 function addSearchHistory(a){if(!a||a.length<3)return;let h=getSearchHist();h=h.filter(x=>x!==a);h.unshift(a);if(h.length>100)h=h.slice(0,100);localStorage.setItem(SK.hist,JSON.stringify(h));renderSearchHist();}
 function removeSearchHist(i){let h=getSearchHist();h.splice(i,1);localStorage.setItem(SK.hist,JSON.stringify(h));renderSearchHist();}
-function renderSearchHist(){const list=document.getElementById('search-hist-list'),h=getSearchHist();if(!h.length){list.innerHTML='<div style="color:#999;font-size:.85em;text-align:center;padding:10px">検索履歴なし</div>';return;}list.innerHTML=h.map((a,i)=>`<div class="addr-chip" draggable="true" data-address="${a}" onclick="selectChipAddr('${a.replace(/'/g,"\\'")}',this)" ondragstart="event.dataTransfer.setData('text/plain','${a.replace(/'/g,"\\'")}');hlDrop(true)" ondragend="hlDrop(false)"><span class="chip-icon">🕐</span><span class="chip-text">${a}</span><button class="chip-remove" onclick="event.stopPropagation();removeSearchHist(${i})">×</button></div>`).join('');}
+function renderSearchHist(){const list=document.getElementById('search-hist-list'),h=getSearchHist();if(!h.length){list.innerHTML='<div style="color:#999;font-size:.85em;text-align:center;padding:10px">検索履歴なし</div>';return;}list.innerHTML=h.map((a,i)=>`<div class="addr-chip" draggable="true" data-address="${a}" onclick="selectChipAddr('${a.replace(/'/g,"\\'")}',this)" ondragstart="event.dataTransfer.setData('text/plain','${a.replace(/'/g,"\\'")}');hlDrop(true)" ondragend="hlDrop(false)"><span class="chip-icon">🕐</span><span class="chip-text">${a}</span><button style="background:#f39c12;color:white;font-size:.7em;font-weight:bold;padding:3px 6px;border-radius:4px;min-height:28px" onclick="event.stopPropagation();addFavFromHist(${i})" title="登録住所に追加">⭐登録</button><button class="chip-remove" onclick="event.stopPropagation();removeSearchHist(${i})">×</button></div>`).join('');}
+function addFavFromHist(idx){const h=getSearchHist();if(!h[idx])return;let f=getFavs();if(!f.includes(h[idx])){f.unshift(h[idx]);localStorage.setItem(SK.fav,JSON.stringify(f));renderFavs();alert('「'+h[idx].substring(0,20)+'…」を登録しました');}else{alert('既に登録済みです');}}
 function getFavs(){return JSON.parse(localStorage.getItem(SK.fav)||'[]');}
 function addFav(){const inp=document.getElementById('fav-input'),v=inp.value.trim();if(!v)return;let f=getFavs();if(!f.includes(v)){f.unshift(v);localStorage.setItem(SK.fav,JSON.stringify(f));inp.value='';renderFavs();}}
 function removeFav(i){let f=getFavs();f.splice(i,1);localStorage.setItem(SK.fav,JSON.stringify(f));renderFavs();}
-function renderFavs(){const list=document.getElementById('fav-list'),f=getFavs();if(!f.length){list.innerHTML='<div style="color:#999;font-size:.85em;text-align:center;padding:10px">登録住所なし</div>';return;}list.innerHTML=f.map((a,i)=>`<div class="addr-chip" draggable="true" data-address="${a}" onclick="selectChipAddr('${a.replace(/'/g,"\\'")}',this)" ondragstart="event.dataTransfer.setData('text/plain','${a.replace(/'/g,"\\'")}');hlDrop(true)" ondragend="hlDrop(false)"><span class="chip-icon">⭐</span><span class="chip-text">${a}</span><button class="chip-remove" onclick="event.stopPropagation();removeFav(${i})">×</button></div>`).join('');}
+function renderFavs(){const list=document.getElementById('fav-list'),f=getFavs();if(!f.length){list.innerHTML='<div style="color:#999;font-size:.85em;text-align:center;padding:10px">登録住所なし</div>';return;}list.innerHTML=f.map((a,i)=>`<div class="addr-chip" draggable="true" data-address="${a}" data-fav-idx="${i}" onclick="selectChipAddr('${a.replace(/'/g,"\\'")}',this)" ondragstart="event.dataTransfer.setData('text/plain','${a.replace(/'/g,"\\'")}');hlDrop(true)" ondragend="hlDrop(false)"><span class="chip-icon">⭐</span><span class="chip-text" id="fav-text-${i}">${a}</span><button style="background:#3498db;color:white;font-size:.7em;font-weight:bold;padding:3px 6px;border-radius:4px;min-height:28px" onclick="event.stopPropagation();editFav(${i})" title="編集">✏️</button><button class="chip-remove" onclick="event.stopPropagation();removeFav(${i})">×</button></div>`).join('');}
+function editFav(idx){
+    const f=getFavs();if(!f[idx])return;
+    const textEl=document.getElementById('fav-text-'+idx);
+    const chip=textEl.closest('.addr-chip');
+    // 既に編集中なら保存
+    const existing=chip.querySelector('.fav-edit-input');
+    if(existing){saveFavEdit(idx);return;}
+    // 編集UIに切替
+    const current=f[idx];
+    textEl.style.display='none';
+    const editInput=document.createElement('input');
+    editInput.type='text';editInput.value=current;editInput.className='fav-edit-input';
+    editInput.style.cssText='flex:1;padding:6px;border:1.5px solid #3498db;border-radius:4px;font-size:.85em;min-width:0';
+    editInput.onkeydown=function(e){if(e.key==='Enter')saveFavEdit(idx);};
+    const saveBtn=document.createElement('button');
+    saveBtn.textContent='💾保存';saveBtn.className='fav-save-btn';
+    saveBtn.style.cssText='background:#27ae60;color:white;font-size:.7em;font-weight:bold;padding:3px 8px;border-radius:4px;min-height:28px';
+    saveBtn.onclick=function(e){e.stopPropagation();saveFavEdit(idx);};
+    chip.insertBefore(editInput,textEl);
+    chip.insertBefore(saveBtn,textEl);
+    editInput.focus();editInput.select();
+}
+function saveFavEdit(idx){
+    const f=getFavs();
+    const chip=document.querySelector(`[data-fav-idx="${idx}"]`);
+    const editInput=chip.querySelector('.fav-edit-input');
+    if(!editInput)return;
+    const newVal=editInput.value.trim();
+    if(newVal&&newVal!==f[idx]){f[idx]=newVal;localStorage.setItem(SK.fav,JSON.stringify(f));}
+    renderFavs();
+}
 function selectChipAddr(a,el){document.querySelectorAll('.addr-chip.selected').forEach(c=>c.classList.remove('selected'));if(selectedChip===a)selectedChip=null;else{selectedChip=a;el.classList.add('selected');}}
 
 function getRouteHist(){return JSON.parse(localStorage.getItem(SK.rhist)||'[]');}
@@ -501,7 +578,7 @@ function extractURL(){const t=document.getElementById('url-result').value;if(t.t
 function displayOCRChips(addrs){const c=document.getElementById('addr-chips'),w=document.getElementById('addr-results'),cnt=document.getElementById('addr-count');if(!addrs.length){w.style.display='block';c.innerHTML='<div style="color:#999;font-size:.85em;text-align:center;padding:10px">住所が見つかりません</div>';cnt.textContent='';return;}w.style.display='block';cnt.textContent=`(${addrs.length}件)`;c.innerHTML='';addrs.forEach(item=>{const full=item.building?item.address+' '+item.building:item.address;const chip=document.createElement('div');chip.className='addr-chip';chip.draggable=true;chip.dataset.address=full;const sub=item.building?`<div style="font-size:.75em;color:#999">🏢${item.building}</div>`:'';chip.innerHTML=`<span class="chip-icon">📍</span><div style="flex:1;min-width:0"><span class="chip-text">${item.address}</span>${sub}</div><button class="chip-remove" onclick="event.stopPropagation();this.closest('.addr-chip').remove()">×</button>`;chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',full);hlDrop(true);});chip.addEventListener('dragend',()=>hlDrop(false));chip.addEventListener('click',e=>{if(e.target.classList.contains('chip-remove'))return;document.querySelectorAll('.addr-chip.selected').forEach(c=>c.classList.remove('selected'));if(selectedChip===full)selectedChip=null;else{selectedChip=full;chip.classList.add('selected');}});c.appendChild(chip);});}
 
 // === ドラッグ＆ドロップ ===
-function setupAddrDrop(){document.querySelectorAll('.address-input').forEach(inp=>{if(inp.dataset.dr)return;inp.dataset.dr='1';inp.addEventListener('dragover',e=>{if(e.dataTransfer.types.includes('text/plain')){e.preventDefault();inp.classList.add('drop-highlight');}});inp.addEventListener('dragleave',()=>inp.classList.remove('drop-highlight'));inp.addEventListener('drop',e=>{e.preventDefault();inp.classList.remove('drop-highlight');const a=e.dataTransfer.getData('text/plain');if(a&&a!=='sort'){inp.value=a;saveData();flash(inp);}});inp.addEventListener('click',()=>{if(selectedChip){inp.value=selectedChip;saveData();flash(inp);document.querySelectorAll('.addr-chip.selected').forEach(c=>c.classList.remove('selected'));selectedChip=null;}});});}
+function setupAddrDrop(){document.querySelectorAll('.address-input').forEach(inp=>{if(inp.dataset.dr)return;inp.dataset.dr='1';inp.addEventListener('dragover',e=>{if(e.dataTransfer.types.includes('text/plain')){e.preventDefault();inp.classList.add('drop-highlight');}});inp.addEventListener('dragleave',()=>inp.classList.remove('drop-highlight'));inp.addEventListener('drop',e=>{e.preventDefault();inp.classList.remove('drop-highlight');const a=e.dataTransfer.getData('text/plain');if(a&&a!=='sort'){inp.value=a;autoResize(inp);saveData();flash(inp);}});inp.addEventListener('click',()=>{if(selectedChip){inp.value=selectedChip;autoResize(inp);saveData();flash(inp);document.querySelectorAll('.addr-chip.selected').forEach(c=>c.classList.remove('selected'));selectedChip=null;}});});}
 function hlDrop(on){document.querySelectorAll('.address-input').forEach(i=>{if(on)i.classList.add('drop-highlight');else i.classList.remove('drop-highlight')});}
 function flash(inp){inp.style.transition='background .3s';inp.style.background='#d5f5e3';setTimeout(()=>inp.style.background='',800);}
 
