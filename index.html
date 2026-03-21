@@ -147,12 +147,14 @@
 
         /* 印刷用 */
         @media print{
-            body *{display:none!important}
-            #print-area,#print-area *{display:block!important}
-            #print-area{position:fixed;inset:0;background:white;z-index:99999;padding:20px;overflow:auto;font-size:12pt}
-            #print-area table{width:100%;border-collapse:collapse;margin-bottom:12px}
+            body *{visibility:hidden}
+            #print-area,#print-area *{visibility:visible!important}
+            #print-area{position:absolute;left:0;top:0;width:100%;background:white;padding:20px;font-size:11pt}
+            #print-area table{width:100%;border-collapse:collapse;margin-bottom:12px;page-break-inside:auto}
+            #print-area tr{page-break-inside:avoid;page-break-after:auto}
             #print-area td,#print-area th{padding:6px 10px;border:1px solid #ccc;text-align:left}
             #print-area th{background:#f5f5f5;font-weight:bold}
+            #print-area h2,#print-area h3{page-break-after:avoid}
         }
     </style>
 </head>
@@ -263,20 +265,27 @@ function createPointRow(id,label,value,isFixed){
     const isStart=id==='start';const isEnd=id==='end';const isWP=id.startsWith('wp-');
     const color=isStart?'#e74c3c':isEnd?'#27ae60':WP_COLORS[parseInt(id.split('-')[1])%WP_COLORS.length];
     div.style.borderLeft=`4px solid ${color}`;
+    // ×ボタン（全地点共通）、GPSボタン（現在地のみ）
+    const clearBtn='<button class="remove-btn" onclick="clearPointVal(this)" title="入力をクリア" style="padding:4px 8px;font-size:.9em">×</button>';
+    const gpsBtn=isStart?'<button id="gps-btn" class="location-btn" onclick="getGPS()" style="font-size:.7em">GPS</button>':'';
+    const deleteBtn=isWP?'<button class="remove-btn" data-action="delete" onclick="removePoint(this)" title="この地点を削除" style="background:#95a5a6;padding:4px 8px;font-size:.75em">🗑</button>':'';
     div.innerHTML=`
         <span class="drag-handle" title="ドラッグで順番入替">⇅</span>
         <span class="input-label" style="color:${color}">${label}</span>
         <textarea class="address-input point-input" data-point-id="${id}" placeholder="住所または施設名" onchange="saveData()" onblur="resolvePlace(this)" rows="1">${value||''}</textarea>
         <button class="voice-btn" onclick="startVoiceFor(this.parentElement.querySelector('.point-input'),this)">🎤</button>
+        ${clearBtn}
         <button class="search-btn" onclick="openGME(this)">🔍</button>
-        ${isWP?'<button class="remove-btn" onclick="removePoint(this)">×</button>':''}
+        ${gpsBtn}
+        ${deleteBtn}
     `;
-    // textarea自動リサイズ
     const ta=div.querySelector('textarea');
     ta.addEventListener('input',()=>autoResize(ta));
     setTimeout(()=>autoResize(ta),0);
     return div;
 }
+
+function clearPointVal(btn){const ta=btn.parentElement.querySelector('.point-input');if(ta){ta.value='';autoResize(ta);saveData();}}
 
 function autoResize(ta){
     ta.style.height='auto';
@@ -382,14 +391,19 @@ function updateStartEndLabels(){
     const items=document.querySelectorAll('#all-points .sort-item');
     items.forEach((item,i)=>{
         const id=item.dataset.pointId;
-        // 最初のアイテムをstartに、最後をendに
         if(i===0&&id!=='start'){
             item.dataset.pointId='start';
             item.querySelector('.point-input').dataset.pointId='start';
             const label=item.querySelector('.input-label');
             label.textContent='🔴 現在地';label.style.color='#e74c3c';
             item.style.borderLeft='4px solid #e74c3c';
-            const rmBtn=item.querySelector('.remove-btn');if(rmBtn)rmBtn.remove();
+            // 🗑削除ボタンを除去（×クリアは残す）
+            const delBtn=item.querySelector('[data-action="delete"]');if(delBtn)delBtn.remove();
+            // GPSボタンを追加（なければ）
+            if(!item.querySelector('#gps-btn')){
+                const gps=document.createElement('button');gps.id='gps-btn';gps.className='location-btn';gps.style.fontSize='.7em';gps.textContent='GPS';gps.onclick=function(){getGPS();};
+                item.appendChild(gps);
+            }
         }
         if(i===items.length-1&&id!=='end'){
             item.dataset.pointId='end';
@@ -397,14 +411,15 @@ function updateStartEndLabels(){
             const label=item.querySelector('.input-label');
             label.textContent='🟢 目的地';label.style.color='#27ae60';
             item.style.borderLeft='4px solid #27ae60';
-            const rmBtn=item.querySelector('.remove-btn');if(rmBtn)rmBtn.remove();
+            const delBtn=item.querySelector('[data-action="delete"]');if(delBtn)delBtn.remove();
+            const gpsBtn=item.querySelector('#gps-btn');if(gpsBtn)gpsBtn.remove();
         }
-        // 中間アイテムでstart/endだったものをwpに変更
         if(i>0&&i<items.length-1&&(id==='start'||id==='end')){
             item.dataset.pointId='wp-0';
             item.querySelector('.point-input').dataset.pointId='wp-0';
-            if(!item.querySelector('.remove-btn')){
-                const btn=document.createElement('button');btn.className='remove-btn';btn.textContent='×';btn.onclick=function(){removePoint(this);};item.appendChild(btn);
+            const gpsBtn=item.querySelector('#gps-btn');if(gpsBtn)gpsBtn.remove();
+            if(!item.querySelector('[data-action="delete"]')){
+                const btn=document.createElement('button');btn.className='remove-btn';btn.dataset.action='delete';btn.textContent='🗑';btn.style.cssText='background:#95a5a6;padding:4px 8px;font-size:.75em';btn.onclick=function(){removePoint(this);};item.appendChild(btn);
             }
         }
     });
