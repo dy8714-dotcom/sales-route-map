@@ -145,6 +145,18 @@
 
         #preprocess-canvas,.hidden-file-input{display:none}
 
+        /* 認証バー */
+        .auth-bar{background:#1a252f;padding:6px 15px;display:flex;align-items:center;justify-content:flex-end;gap:8px;font-size:.82em;flex-shrink:0}
+        .auth-bar .auth-user{color:#ecf0f1;display:flex;align-items:center;gap:6px}
+        .auth-bar .auth-user img{width:24px;height:24px;border-radius:50%;border:1.5px solid #3498db}
+        .auth-bar .auth-name{color:#bdc3c7;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .auth-bar .sync-status{color:#27ae60;font-size:.8em}
+        .auth-bar .sync-status.syncing{color:#f39c12}
+        .auth-bar .sync-status.error{color:#e74c3c}
+        .auth-login-btn{background:#4285f4;color:white;border:none;padding:6px 14px;border-radius:6px;font-weight:bold;font-size:.85em;cursor:pointer;display:flex;align-items:center;gap:5px}
+        .auth-login-btn:hover{background:#3367d6}
+        .auth-logout-btn{background:#636e72;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:.75em;cursor:pointer}
+
         /* 印刷用 */
         @media print{
             body *{visibility:hidden}
@@ -160,6 +172,15 @@
 </head>
 <body>
 <header>営業ルートナビ（視認性強化版 v2）</header>
+<!-- 認証バー -->
+<div class="auth-bar" id="auth-bar">
+    <div id="auth-logged-out"><button class="auth-login-btn" onclick="firebaseLogin()">🔑 Googleでログイン（データ同期）</button></div>
+    <div id="auth-logged-in" style="display:none">
+        <div class="auth-user"><img id="auth-photo" src="" alt=""><span class="auth-name" id="auth-name"></span></div>
+        <span class="sync-status" id="sync-status">✅ 同期済</span>
+        <button class="auth-logout-btn" onclick="firebaseLogout()">ログアウト</button>
+    </div>
+</div>
 <div class="mobile-tabs"><button class="active" onclick="switchView('map')">🗺️ 地図</button><button onclick="switchView('list')">📋 設定</button></div>
 <div id="main-container">
 <div id="sidebar">
@@ -215,6 +236,93 @@
 <div id="print-area" style="display:none"></div>
 
 <canvas id="preprocess-canvas"></canvas>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+// Firebase初期化（SDKが読み込めない環境でもアプリは動作）
+let auth=null,db=null,currentUser=null,origSetItem=localStorage.setItem.bind(localStorage);
+try{
+    if(typeof firebase!=='undefined'){
+        const firebaseConfig={apiKey:"AIzaSyAb6IvnzssQUxba3c4PTTI7J1iYlU30Guk",authDomain:"sales-route-navi.firebaseapp.com",projectId:"sales-route-navi",storageBucket:"sales-route-navi.firebasestorage.app",messagingSenderId:"973297469724",appId:"1:973297469724:web:f898c4439dbe6ea13dd2d9"};
+        firebase.initializeApp(firebaseConfig);
+        auth=firebase.auth();
+        db=firebase.firestore();
+
+        auth.onAuthStateChanged(user=>{
+            currentUser=user;
+            const loggedOut=document.getElementById('auth-logged-out');
+            const loggedIn=document.getElementById('auth-logged-in');
+            if(user){
+                loggedOut.style.display='none';loggedIn.style.display='flex';
+                document.getElementById('auth-name').textContent=user.displayName||user.email;
+                document.getElementById('auth-photo').src=user.photoURL||'';
+                syncFromFirestore();
+            }else{
+                loggedOut.style.display='block';loggedIn.style.display='none';
+            }
+        });
+
+        // localStorageのsetItemをフックして自動同期
+        localStorage.setItem=function(key,value){
+            origSetItem(key,value);
+            if(currentUser&&(key.startsWith('sales_')||key.startsWith('search_')||key.startsWith('fav_')||key.startsWith('route_'))){
+                syncToFirestore(key,value);
+            }
+        };
+    }else{
+        console.log('Firebase SDK未読込：ローカルモードで動作します');
+    }
+}catch(e){console.warn('Firebase初期化スキップ:',e);}
+
+async function firebaseLogin(){
+    if(!auth){alert('Firebase未接続です。GitHub Pagesにアップロード後にお試しください。');return;}
+    try{
+        const provider=new firebase.auth.GoogleAuthProvider();
+        await auth.signInWithPopup(provider);
+    }catch(e){
+        if(e.code==='auth/popup-blocked'){
+            const provider=new firebase.auth.GoogleAuthProvider();
+            await auth.signInWithRedirect(provider);
+        }else{alert('ログインエラー: '+e.message);}
+    }
+}
+
+function firebaseLogout(){
+    if(!auth)return;
+    if(confirm('ログアウトしますか？\nローカルのデータはこの端末に残ります。'))auth.signOut();
+}
+
+function setSyncStatus(status){
+    const el=document.getElementById('sync-status');if(!el)return;
+    if(status==='syncing'){el.textContent='🔄 同期中...';el.className='sync-status syncing';}
+    else if(status==='done'){el.textContent='✅ 同期済';el.className='sync-status';}
+    else if(status==='error'){el.textContent='❌ 同期エラー';el.className='sync-status error';}
+}
+
+async function syncToFirestore(key,data){
+    if(!currentUser||!db)return;
+    try{setSyncStatus('syncing');await db.collection('users').doc(currentUser.uid).collection('data').doc(key).set({value:data,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});setSyncStatus('done');}
+    catch(e){console.error('Sync error:',e);setSyncStatus('error');}
+}
+
+async function syncFromFirestore(){
+    if(!currentUser||!db)return;
+    try{
+        setSyncStatus('syncing');
+        const snap=await db.collection('users').doc(currentUser.uid).collection('data').get();
+        let hasData=false;
+        snap.forEach(doc=>{const key=doc.id;const val=doc.data().value;if(val){origSetItem(key,val);hasData=true;}});
+        setSyncStatus('done');
+        if(hasData&&typeof renderSearchHist==='function'){
+            const c=document.getElementById('all-points');if(c)c.innerHTML='';
+            loadData();renderSearchHist();renderFavs();renderRouteHist();
+        }
+    }catch(e){console.error('Load error:',e);setSyncStatus('error');}
+}
+</script>
+
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCIj6xwk9pkWn9YbiAymzFt04AG_XrmC40&libraries=places&callback=initMap" async defer></script>
 <script>
 let map,dirSvc,dirRen,infoWin,geocoder,markers=[],overlays=[],routePolylines=[],selectedChip=null,DistLabel=null,uploadedImgs=[];
