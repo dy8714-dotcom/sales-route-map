@@ -177,6 +177,7 @@
     <div id="auth-logged-out"><button class="auth-login-btn" onclick="firebaseLogin()">🔑 Googleでログイン（データ同期）</button></div>
     <div id="auth-logged-in" style="display:none">
         <div class="auth-user"><img id="auth-photo" src="" alt=""><span class="auth-name" id="auth-name"></span></div>
+        <button onclick="manualSync()" style="background:#27ae60;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:.75em;font-weight:bold;cursor:pointer" title="全データをクラウドと同期">🔄 同期</button>
         <span class="sync-status" id="sync-status">✅ 同期済</span>
         <button class="auth-logout-btn" onclick="firebaseLogout()">ログアウト</button>
     </div>
@@ -241,8 +242,10 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
-// Firebase初期化（SDKが読み込めない環境でもアプリは動作）
-let auth=null,db=null,currentUser=null,origSetItem=localStorage.setItem.bind(localStorage);
+// Firebase初期化
+let auth=null,db=null,currentUser=null,origSetItem=localStorage.setItem.bind(localStorage),origRemoveItem=localStorage.removeItem.bind(localStorage);
+const SYNC_KEYS=['sales_route_v10','search_history_v1','fav_addresses_v1','route_history_v1'];
+
 try{
     if(typeof firebase!=='undefined'){
         const firebaseConfig={apiKey:"AIzaSyAb6IvnzssQUxba3c4PTTI7J1iYlU30Guk",authDomain:"sales-route-navi.firebaseapp.com",projectId:"sales-route-navi",storageBucket:"sales-route-navi.firebasestorage.app",messagingSenderId:"973297469724",appId:"1:973297469724:web:f898c4439dbe6ea13dd2d9"};
@@ -250,7 +253,7 @@ try{
         auth=firebase.auth();
         db=firebase.firestore();
 
-        auth.onAuthStateChanged(user=>{
+        auth.onAuthStateChanged(async user=>{
             currentUser=user;
             const loggedOut=document.getElementById('auth-logged-out');
             const loggedIn=document.getElementById('auth-logged-in');
@@ -258,7 +261,8 @@ try{
                 loggedOut.style.display='none';loggedIn.style.display='flex';
                 document.getElementById('auth-name').textContent=user.displayName||user.email;
                 document.getElementById('auth-photo').src=user.photoURL||'';
-                syncFromFirestore();
+                // 双方向同期：Firestoreから取得 → ローカルにないデータをマージ → ローカルをアップロード
+                await syncBidirectional();
             }else{
                 loggedOut.style.display='block';loggedIn.style.display='none';
             }
@@ -267,12 +271,12 @@ try{
         // localStorageのsetItemをフックして自動同期
         localStorage.setItem=function(key,value){
             origSetItem(key,value);
-            if(currentUser&&(key.startsWith('sales_')||key.startsWith('search_')||key.startsWith('fav_')||key.startsWith('route_'))){
-                syncToFirestore(key,value);
+            if(currentUser&&SYNC_KEYS.includes(key)){
+                syncOneToFirestore(key,value);
             }
         };
     }else{
-        console.log('Firebase SDK未読込：ローカルモードで動作します');
+        console.log('Firebase SDK未読込：ローカルモードで動作');
     }
 }catch(e){console.warn('Firebase初期化スキップ:',e);}
 
@@ -283,8 +287,7 @@ async function firebaseLogin(){
         await auth.signInWithPopup(provider);
     }catch(e){
         if(e.code==='auth/popup-blocked'){
-            const provider=new firebase.auth.GoogleAuthProvider();
-            await auth.signInWithRedirect(provider);
+            await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
         }else{alert('ログインエラー: '+e.message);}
     }
 }
@@ -294,32 +297,132 @@ function firebaseLogout(){
     if(confirm('ログアウトしますか？\nローカルのデータはこの端末に残ります。'))auth.signOut();
 }
 
-function setSyncStatus(status){
+function setSyncStatus(status,msg){
     const el=document.getElementById('sync-status');if(!el)return;
-    if(status==='syncing'){el.textContent='🔄 同期中...';el.className='sync-status syncing';}
-    else if(status==='done'){el.textContent='✅ 同期済';el.className='sync-status';}
-    else if(status==='error'){el.textContent='❌ 同期エラー';el.className='sync-status error';}
+    if(status==='syncing'){el.textContent=msg||'🔄 同期中...';el.className='sync-status syncing';}
+    else if(status==='done'){el.textContent=msg||'✅ 同期済';el.className='sync-status';}
+    else if(status==='error'){el.textContent=msg||'❌ 同期エラー';el.className='sync-status error';}
 }
 
-async function syncToFirestore(key,data){
-    if(!currentUser||!db)return;
-    try{setSyncStatus('syncing');await db.collection('users').doc(currentUser.uid).collection('data').doc(key).set({value:data,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});setSyncStatus('done');}
-    catch(e){console.error('Sync error:',e);setSyncStatus('error');}
-}
-
-async function syncFromFirestore(){
+// 単一キーをFirestoreに同期
+async function syncOneToFirestore(key,data){
     if(!currentUser||!db)return;
     try{
-        setSyncStatus('syncing');
-        const snap=await db.collection('users').doc(currentUser.uid).collection('data').get();
-        let hasData=false;
-        snap.forEach(doc=>{const key=doc.id;const val=doc.data().value;if(val){origSetItem(key,val);hasData=true;}});
+        await db.collection('users').doc(currentUser.uid).collection('data').doc(key).set({
+            value:data,
+            updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
         setSyncStatus('done');
-        if(hasData&&typeof renderSearchHist==='function'){
-            const c=document.getElementById('all-points');if(c)c.innerHTML='';
-            loadData();renderSearchHist();renderFavs();renderRouteHist();
+    }catch(e){console.error('Sync error:',e);setSyncStatus('error');}
+}
+
+// 双方向同期（ログイン時に実行）
+async function syncBidirectional(){
+    if(!currentUser||!db)return;
+    try{
+        setSyncStatus('syncing','🔄 データ同期中...');
+
+        // 1. Firestoreからデータを取得
+        const snap=await db.collection('users').doc(currentUser.uid).collection('data').get();
+        const firestoreData={};
+        snap.forEach(doc=>{
+            const val=doc.data().value;
+            if(val)firestoreData[doc.id]=val;
+        });
+
+        // 2. 各キーについてマージ
+        for(const key of SYNC_KEYS){
+            const localVal=localStorage.getItem(key);
+            const remoteVal=firestoreData[key];
+
+            if(remoteVal&&localVal){
+                // 両方にデータがある → マージ（リスト系は結合、設定系はリモート優先）
+                try{
+                    const localObj=JSON.parse(localVal);
+                    const remoteObj=JSON.parse(remoteVal);
+                    if(Array.isArray(localObj)&&Array.isArray(remoteObj)){
+                        // 配列データ（履歴・登録住所等）→ 重複除去して結合
+                        const merged=mergeArrays(remoteObj,localObj,key);
+                        const mergedStr=JSON.stringify(merged);
+                        origSetItem(key,mergedStr);
+                        await syncOneToFirestore(key,mergedStr);
+                    }else{
+                        // オブジェクトデータ（ルート設定等）→ リモート優先
+                        origSetItem(key,remoteVal);
+                    }
+                }catch(e){
+                    // JSONパース失敗→リモート優先
+                    origSetItem(key,remoteVal);
+                }
+            }else if(remoteVal&&!localVal){
+                // リモートにのみある → ローカルに反映
+                origSetItem(key,remoteVal);
+            }else if(!remoteVal&&localVal){
+                // ローカルにのみある → リモートにアップロード
+                await syncOneToFirestore(key,localVal);
+            }
         }
-    }catch(e){console.error('Load error:',e);setSyncStatus('error');}
+
+        setSyncStatus('done','✅ 同期完了');
+
+        // 3. UIを更新
+        refreshUI();
+
+    }catch(e){
+        console.error('Bidirectional sync error:',e);
+        setSyncStatus('error','❌ 同期エラー');
+    }
+}
+
+// 配列データのマージ（重複除去）
+function mergeArrays(remote,local,key){
+    if(key==='search_history_v1'){
+        // 検索履歴: 文字列配列、重複除去、最大100件
+        const seen=new Set();
+        const merged=[];
+        [...remote,...local].forEach(item=>{
+            if(typeof item==='string'&&!seen.has(item)){seen.add(item);merged.push(item);}
+        });
+        return merged.slice(0,100);
+    }else if(key==='fav_addresses_v1'){
+        // 登録住所: 文字列配列、重複除去
+        const seen=new Set();
+        const merged=[];
+        [...remote,...local].forEach(item=>{
+            if(typeof item==='string'&&!seen.has(item)){seen.add(item);merged.push(item);}
+        });
+        return merged;
+    }else if(key==='route_history_v1'){
+        // ルート履歴: オブジェクト配列、日時で重複除去、最大30件
+        const seen=new Set();
+        const merged=[];
+        [...remote,...local].forEach(item=>{
+            const id=item.date+'_'+item.start+'_'+item.end;
+            if(!seen.has(id)){seen.add(id);merged.push(item);}
+        });
+        return merged.slice(0,30);
+    }
+    return remote;
+}
+
+// 手動同期
+async function manualSync(){
+    if(!currentUser){alert('ログインしてから同期してください');return;}
+    setSyncStatus('syncing','🔄 手動同期中...');
+    await syncBidirectional();
+}
+
+// UI全体を最新データで再描画
+function refreshUI(){
+    if(typeof renderSearchHist==='function')renderSearchHist();
+    if(typeof renderFavs==='function')renderFavs();
+    if(typeof renderRouteHist==='function')renderRouteHist();
+    // ルート地点も再描画
+    const c=document.getElementById('all-points');
+    if(c&&typeof loadData==='function'){
+        c.innerHTML='';
+        loadData();
+    }
 }
 </script>
 
