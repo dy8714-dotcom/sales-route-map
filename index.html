@@ -243,7 +243,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
 // Firebase初期化
-let auth=null,db=null,currentUser=null,origSetItem=localStorage.setItem.bind(localStorage),origRemoveItem=localStorage.removeItem.bind(localStorage);
+let auth=null,db=null,currentUser=null,origSetItem=localStorage.setItem.bind(localStorage),origGetItem=localStorage.getItem.bind(localStorage),origRemoveItem=localStorage.removeItem.bind(localStorage);
 const SYNC_KEYS=['sales_route_v10','search_history_v1','fav_addresses_v1','route_history_v1'];
 
 try{
@@ -326,33 +326,33 @@ async function syncBidirectional(){
         const snap=await db.collection('users').doc(currentUser.uid).collection('data').get();
         const firestoreData={};
         snap.forEach(doc=>{
-            const val=doc.data().value;
-            if(val)firestoreData[doc.id]=val;
+            const d=doc.data();
+            if(d.value)firestoreData[doc.id]=d.value;
         });
 
         // 2. 各キーについてマージ
         for(const key of SYNC_KEYS){
-            const localVal=localStorage.getItem(key);
+            const localVal=origGetItem(key);
             const remoteVal=firestoreData[key];
 
             if(remoteVal&&localVal){
-                // 両方にデータがある → マージ（リスト系は結合、設定系はリモート優先）
+                // 両方にデータがある → マージ（リスト系は結合、設定系はローカル優先）
                 try{
                     const localObj=JSON.parse(localVal);
                     const remoteObj=JSON.parse(remoteVal);
                     if(Array.isArray(localObj)&&Array.isArray(remoteObj)){
-                        // 配列データ（履歴・登録住所等）→ 重複除去して結合
-                        const merged=mergeArrays(remoteObj,localObj,key);
+                        // 配列データ（履歴・登録住所等）→ ローカルを先頭に結合して重複除去
+                        const merged=mergeArrays(localObj,remoteObj,key);
                         const mergedStr=JSON.stringify(merged);
                         origSetItem(key,mergedStr);
                         await syncOneToFirestore(key,mergedStr);
                     }else{
-                        // オブジェクトデータ（ルート設定等）→ リモート優先
-                        origSetItem(key,remoteVal);
+                        // オブジェクトデータ（ルート設定等）→ ローカル優先（直近の入力を守る）
+                        await syncOneToFirestore(key,localVal);
                     }
                 }catch(e){
-                    // JSONパース失敗→リモート優先
-                    origSetItem(key,remoteVal);
+                    // JSONパース失敗→ローカル優先
+                    await syncOneToFirestore(key,localVal);
                 }
             }else if(remoteVal&&!localVal){
                 // リモートにのみある → ローカルに反映
@@ -374,35 +374,38 @@ async function syncBidirectional(){
     }
 }
 
-// 配列データのマージ（重複除去）
-function mergeArrays(remote,local,key){
+// 配列データのマージ（ローカル優先・入力順保持）
+// 引数: local=ローカル配列（新しい順）, remote=Firestore配列（古い可能性あり）
+function mergeArrays(local,remote,key){
     if(key==='search_history_v1'){
-        // 検索履歴: 文字列配列、重複除去、最大100件
+        // 検索履歴: ローカルを先頭に結合、重複除去、最大100件
         const seen=new Set();
         const merged=[];
-        [...remote,...local].forEach(item=>{
+        [...local,...remote].forEach(item=>{
             if(typeof item==='string'&&!seen.has(item)){seen.add(item);merged.push(item);}
         });
         return merged.slice(0,100);
     }else if(key==='fav_addresses_v1'){
-        // 登録住所: 文字列配列、重複除去
+        // 登録住所: ローカルを先頭に結合、重複除去
         const seen=new Set();
         const merged=[];
-        [...remote,...local].forEach(item=>{
+        [...local,...remote].forEach(item=>{
             if(typeof item==='string'&&!seen.has(item)){seen.add(item);merged.push(item);}
         });
         return merged;
     }else if(key==='route_history_v1'){
-        // ルート履歴: オブジェクト配列、日時で重複除去、最大30件
+        // ルート履歴: ローカルを先頭に結合、重複除去、日付降順ソート、最大30件
         const seen=new Set();
         const merged=[];
-        [...remote,...local].forEach(item=>{
+        [...local,...remote].forEach(item=>{
             const id=item.date+'_'+item.start+'_'+item.end;
             if(!seen.has(id)){seen.add(id);merged.push(item);}
         });
+        // 日付降順ソート（新しいルートが必ず先頭）
+        merged.sort((a,b)=>new Date(b.date)-new Date(a.date));
         return merged.slice(0,30);
     }
-    return remote;
+    return local;
 }
 
 // 手動同期
@@ -412,12 +415,12 @@ async function manualSync(){
     await syncBidirectional();
 }
 
-// UI全体を最新データで再描画
+// UI全体を最新データで再描画（sync後に呼ぶ）
 function refreshUI(){
     if(typeof renderSearchHist==='function')renderSearchHist();
     if(typeof renderFavs==='function')renderFavs();
     if(typeof renderRouteHist==='function')renderRouteHist();
-    // ルート地点も再描画
+    // ルート地点はlocalStorageの最新値で再描画
     const c=document.getElementById('all-points');
     if(c&&typeof loadData==='function'){
         c.innerHTML='';
@@ -483,7 +486,7 @@ function createPointRow(id,label,value,isFixed){
     div.innerHTML=`
         <span class="drag-handle" title="ドラッグで順番入替">⇅</span>
         <span class="input-label" style="color:${color}">${label}</span>
-        <textarea class="address-input point-input" data-point-id="${id}" placeholder="住所または施設名" onchange="saveData()" onblur="resolvePlace(this)" rows="1">${value||''}</textarea>
+        <textarea class="address-input point-input" data-point-id="${id}" placeholder="住所または施設名" oninput="saveData()" onblur="resolvePlace(this)" rows="1">${value||''}</textarea>
         <button class="voice-btn" onclick="startVoiceFor(this.parentElement.querySelector('.point-input'),this)">🎤</button>
         ${clearBtn}
         <button class="search-btn" onclick="openGME(this)">🔍</button>
